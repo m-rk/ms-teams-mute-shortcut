@@ -49,7 +49,12 @@ Microsoft documents **Shift-Command-M** as the macOS mute toggle in its [Teams k
 
 ### “Shortcuts is not allowed to send keystrokes”
 
-Open **System Settings → Privacy & Security → Accessibility** and enable **Shortcuts**. If it is already enabled, turn it off and on again, then restart Shortcuts.
+Open **System Settings → Privacy & Security → Accessibility** and enable **Shortcuts**. If it is already enabled:
+
+1. Quit Shortcuts
+2. Go to **System Settings → Privacy & Security → Accessibility**, and _delete_ the entry for Shortcuts (use the `-` button; do not simply toggle it off)
+3. Add Shortcuts again with the `+` button
+4. Open Shortcuts and run Toggle Teams Mute again
 
 ### Teams asks macOS to locate an application
 
