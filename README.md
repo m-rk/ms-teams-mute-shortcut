@@ -1,5 +1,11 @@
 # Microsoft Teams global mute shortcut for macOS
 
+<p align="center">
+  <img src="assets/mute-mic.png" alt="Mute microphone control" width="180">
+  &nbsp;&nbsp;
+  <img src="assets/unmute-mic.png" alt="Unmute microphone control" width="180">
+</p>
+
 Toggle mute in Microsoft Teams from any macOS app using the built-in Shortcuts app. The shortcut briefly focuses Teams, sends its mute command, then restores the app you were using.
 
 No extra software, background service, or microphone access is required.
