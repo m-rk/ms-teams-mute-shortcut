@@ -6,6 +6,7 @@ repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 install_dir=${TEAMS_MUTE_INSTALL_DIR:-"${HOME}/Applications"}
 app_name="Teams Mute Helper.app"
 app_path="${install_dir}/${app_name}"
+installed_executable="${app_path}/Contents/MacOS/applet"
 temp_dir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/teams-mute-helper.XXXXXX")
 
 cleanup() {
@@ -46,6 +47,8 @@ done
 /bin/mkdir -p "$install_dir"
 
 if [ -e "$app_path" ]; then
+	/usr/bin/pkill -f -x "$installed_executable" >/dev/null 2>&1 || true
+
 	backup_dir="${HOME}/Library/Application Support/ms-teams-mute-shortcut/backups"
 	timestamp=$(/bin/date +%Y%m%d-%H%M%S)
 	/bin/mkdir -p "$backup_dir"

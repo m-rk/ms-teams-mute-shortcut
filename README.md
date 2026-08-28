@@ -69,6 +69,10 @@ Open **System Settings → Privacy & Security → Accessibility** and enable **T
 
 Reinstalling rebuilds and re-signs the helper. Refresh its Accessibility toggle after reinstalling so macOS recognises the new signature.
 
+### The shortcut works once, then stops
+
+An older helper build could remain running after the first toggle, causing later launch requests to reuse it without running the toggle again. Pull the latest version and re-run `./install-helper.sh`. The installer stops the stale helper, and the current helper quits after every toggle.
+
 ### A Run/Quit window appears
 
 Re-run `./install-helper.sh`. The installer explicitly disables the AppleScript startup screen and configures the helper as a background-only app.

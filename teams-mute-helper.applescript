@@ -1,4 +1,23 @@
 on run
+	my runAndQuit()
+end run
+
+on reopen
+	my runAndQuit()
+end reopen
+
+on runAndQuit()
+	try
+		my toggleTeamsMute()
+	on error errorMessage number errorNumber
+		tell current application to quit
+		error errorMessage number errorNumber
+	end try
+
+	tell current application to quit
+end runAndQuit
+
+on toggleTeamsMute()
 	tell application "System Events"
 		set previousPID to unix id of first application process whose frontmost is true
 	end tell
@@ -16,4 +35,4 @@ on run
 			set frontmost of first application process whose unix id is previousPID to true
 		end try
 	end tell
-end run
+end toggleTeamsMute
