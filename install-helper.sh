@@ -7,6 +7,7 @@ install_dir=${TEAMS_MUTE_INSTALL_DIR:-"${HOME}/Applications"}
 app_name="Teams Mute Helper.app"
 app_path="${install_dir}/${app_name}"
 installed_executable="${app_path}/Contents/MacOS/applet"
+lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 temp_dir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/teams-mute-helper.XXXXXX")
 
 cleanup() {
@@ -48,6 +49,7 @@ done
 
 if [ -e "$app_path" ]; then
 	/usr/bin/pkill -f -x "$installed_executable" >/dev/null 2>&1 || true
+	"$lsregister" -u "$app_path" >/dev/null 2>&1 || true
 
 	backup_dir="${HOME}/Library/Application Support/ms-teams-mute-shortcut/backups"
 	timestamp=$(/bin/date +%Y%m%d-%H%M%S)
@@ -57,6 +59,7 @@ fi
 
 /usr/bin/ditto "$built_app" "$app_path"
 /usr/bin/codesign --verify --deep --strict "$app_path"
+"$lsregister" -f "$app_path"
 
 /usr/bin/printf 'Installed %s\n' "$app_path"
 /usr/bin/printf 'Next: enable Teams Mute Helper in System Settings > Privacy & Security > Accessibility.\n'

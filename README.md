@@ -16,7 +16,6 @@ No third-party software, background service, microphone access, or network acces
 
 - macOS with the Shortcuts app
 - The current Microsoft Teams desktop app (`com.microsoft.teams2`)
-- Teams' **Toggle mute** shortcut set to **Shift-Command-M**
 
 ## Set up
 
@@ -28,9 +27,11 @@ Clone or download this repository, then run:
 ./install-helper.sh
 ```
 
-The installer builds and ad-hoc signs `Teams Mute Helper.app` locally, then installs it in `~/Applications`. It sets the helper to run without a window or Dock icon.
+The installer builds and ad-hoc signs `Teams Mute Helper.app` locally, installs it in `~/Applications`, and refreshes its Launch Services registration. It sets the helper to run without a window or Dock icon.
 
 Open **System Settings → Privacy & Security → Accessibility**, add `~/Applications/Teams Mute Helper.app`, and enable it.
+
+If you reinstall the helper, turn its Accessibility entry off and on again so macOS recognises the new local signature.
 
 ### 2. Create the global shortcut
 
@@ -40,7 +41,7 @@ Open **System Settings → Privacy & Security → Accessibility**, add `~/Applic
 4. Set the shortcut to receive **no input**.
 5. Open the shortcut's **Details** panel.
 6. Enable **Use as Quick Action** and **Services Menu**.
-7. Add a keyboard shortcut. For example, **Control-Shift-Command-A**.
+7. Add **Control-Shift-Command-A** as its keyboard shortcut.
 
 Join a Teams meeting and use the keyboard shortcut from another app. Teams should toggle mute and return focus to the previous app.
 
@@ -52,7 +53,7 @@ This project separates the responsibilities:
 
 1. The global Shortcut launches `Teams Mute Helper.app` without bringing it forward.
 2. The helper records the active app's process ID.
-3. It activates Microsoft Teams and sends **Shift-Command-M**.
+3. It activates Microsoft Teams, finds the **Mute mic** or **Unmute mic** control in the Teams Accessibility tree, and presses it.
 4. It restores the previous app by process ID and exits.
 
 Only the helper performs Accessibility automation, so it is the only component that needs Accessibility permission.
@@ -75,13 +76,11 @@ An older helper build could remain running after the first toggle, causing later
 
 ### A Run/Quit window appears
 
-Re-run `./install-helper.sh`. The installer explicitly disables the AppleScript startup screen and configures the helper as a background-only app.
+Pull the latest version and re-run `./install-helper.sh`. Repeated rebuilds can leave a stale Launch Services registration, causing the Shortcut to open an older helper. The current installer unregisters the replaced app and registers the new build.
 
 ### Teams focuses but mute does not change
 
-Open **Teams → Settings and more → Keyboard shortcuts** and confirm **Toggle mute** is assigned to **Shift-Command-M**. Shortcut presets can change Teams' key assignments. Fully quit and reopen Teams after changing the preset or shortcut.
-
-Microsoft documents **Shift-Command-M** as the macOS mute toggle in its [Teams keyboard shortcut reference](https://support.microsoft.com/en-us/accessibility/teams/keyboard-shortcuts-for-microsoft-teams).
+Confirm a meeting or call is open and its **Mute mic** or **Unmute mic** button is visible. Fully quit and reopen Teams if its meeting controls are not responding.
 
 ### Teams asks macOS to locate an application
 
@@ -98,11 +97,12 @@ Use the current helper from this repository. It restores the previous app by pro
 - Teams must be running with a meeting or call open.
 - Teams briefly receives focus because it does not expose a system-wide mute API on macOS.
 - The helper targets the current Teams desktop app. Classic Teams uses a different bundle ID.
+- The helper recognises the English Accessibility labels **Mute mic** and **Unmute mic**.
 - The global keyboard shortcut is configured in Shortcuts, not in the AppleScript.
 
 ## Privacy
 
-The helper does not access audio, meeting content, files, or the network. macOS Accessibility permission is used only to identify the active app, send the Teams keystroke, and restore focus. The complete automation is readable in this repository and is compiled locally during installation.
+The helper does not access audio, files, or the network. macOS Accessibility permission is used to identify the active app, search Teams' local Accessibility tree for the microphone control, press that control, and restore focus. It does not retain or transmit Accessibility data. The complete automation is readable in this repository and is compiled locally during installation.
 
 ## License
 

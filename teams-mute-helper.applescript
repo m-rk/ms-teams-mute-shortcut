@@ -26,7 +26,37 @@ on toggleTeamsMute()
 	delay 0.25
 
 	tell application "System Events"
-		keystroke "m" using {command down, shift down}
+		set frontmost of application process "MSTeams" to true
+		set teamsProcesses to every application process whose name contains "Teams"
+		set micControl to missing value
+
+		repeat with teamsProcess in teamsProcesses
+			tell teamsProcess
+				repeat with teamsWindow in windows
+					repeat with candidateElement in entire contents of teamsWindow
+						set candidateName to ""
+						set candidateDescription to ""
+						try
+							set candidateName to name of candidateElement
+						end try
+						try
+							set candidateDescription to description of candidateElement
+						end try
+						if candidateName is "Mute mic" or candidateName is "Unmute mic" or candidateDescription is "Mute mic" or candidateDescription is "Unmute mic" then
+							set micControl to candidateElement
+							exit repeat
+						end if
+					end repeat
+					if micControl is not missing value then exit repeat
+				end repeat
+			end tell
+			if micControl is not missing value then exit repeat
+		end repeat
+
+		if micControl is missing value then
+			error "Could not find the Teams microphone control."
+		end if
+		click micControl
 	end tell
 
 	delay 0.1
