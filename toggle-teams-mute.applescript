@@ -1,4 +1,7 @@
+use scripting additions
+
 on run {input, parameters}
-	do shell script "/usr/bin/open -gj -n -b io.github.m-rk.ms-teams-mute-helper"
+	set helperExecutable to (system attribute "HOME") & "/Applications/Teams Mute Helper.app/Contents/MacOS/TeamsMuteHelper"
+	do shell script quoted form of helperExecutable
 	return input
 end run

@@ -8,14 +8,16 @@
 
 Toggle mute in Microsoft Teams from any macOS app with a global keyboard shortcut.
 
-The setup uses the built-in Shortcuts app plus a tiny local AppleScript helper. The helper owns Accessibility permission, so Chrome, Slack, and other foreground apps do not ask to control your computer.
+The setup uses the built-in Shortcuts app plus a tiny native helper compiled locally from the included Objective-C source. The helper owns Accessibility permission, so Chrome, Slack, and other foreground apps do not ask to control your computer.
 
-No third-party software, background service, microphone access, or network access is required. The helper runs only when invoked and exits immediately.
+No third-party runtime, background service, microphone access, or network access is required. The helper runs only when invoked and exits immediately.
 
 ## Requirements
 
-- macOS with the Shortcuts app
+- macOS 13 or later with the Shortcuts app
+- Xcode Command Line Tools (`xcode-select --install`)
 - The current Microsoft Teams desktop app (`com.microsoft.teams2`)
+- Teams' **Toggle mute** command assigned to **Shift-Command-M**
 
 ## Set up
 
@@ -27,11 +29,11 @@ Clone or download this repository, then run:
 ./install-helper.sh
 ```
 
-The installer builds and ad-hoc signs `Teams Mute Helper.app` locally, installs it in `~/Applications`, and refreshes its Launch Services registration. It sets the helper to run without a window or Dock icon.
+The installer compiles and ad-hoc signs `Teams Mute Helper.app` locally and installs it in `~/Applications`. It sets the helper to run without a window or Dock icon.
 
 Open **System Settings → Privacy & Security → Accessibility**, add `~/Applications/Teams Mute Helper.app`, and enable it.
 
-If you reinstall the helper, turn its Accessibility entry off and on again so macOS recognises the new local signature.
+If Accessibility access is not active after reinstalling, turn the helper's entry off and on again.
 
 ### 2. Create the global shortcut
 
@@ -51,10 +53,14 @@ macOS implements a global Shortcuts key combination through the Services system.
 
 This project separates the responsibilities:
 
-1. The global Shortcut launches `Teams Mute Helper.app` without bringing it forward.
-2. The helper records the active app's process ID.
-3. It activates Microsoft Teams, finds the **Mute mic** or **Unmute mic** control in the Teams Accessibility tree, and presses it.
-4. It restores the previous app by process ID and exits.
+1. The global Shortcut executes the installed helper and waits for its result.
+2. The helper finds the active meeting window and reads whether its control says **Mute mic** or **Unmute mic**.
+3. It raises Teams, waits for the global shortcut's physical modifier keys to be released, and sends Teams' **Shift-Command-M** shortcut.
+4. It verifies that Teams' mic state changed, restores the previous app, and exits.
+
+The helper tries a system HID event first. If Teams does not change state, it retries with process-targeted key delivery. Verification prevents a successful first attempt from being toggled a second time.
+
+The Shortcut runs the helper executable directly instead of asking Launch Services to open its bundle. This avoids stale app registrations silently swallowing a launch request.
 
 Only the helper performs Accessibility automation, so it is the only component that needs Accessibility permission.
 
@@ -68,28 +74,46 @@ The Shortcut is probably running the Teams automation directly. Replace its Appl
 
 Open **System Settings → Privacy & Security → Accessibility** and enable **Teams Mute Helper**. If it is already enabled, turn it off and on again.
 
-Reinstalling rebuilds and re-signs the helper. Refresh its Accessibility toggle after reinstalling so macOS recognises the new signature.
+Reinstalling rebuilds and re-signs the helper. Refresh its Accessibility toggle if macOS does not retain the grant.
 
 ### The shortcut works once, then stops
 
-An older helper build could remain running after the first toggle, causing later launch requests to reuse it without running the toggle again. Pull the latest version and re-run `./install-helper.sh`. The installer stops the stale helper, and the current helper quits after every toggle.
+Replace the Shortcut's AppleScript with the current [`toggle-teams-mute.applescript`](toggle-teams-mute.applescript). Older versions launched the helper through Launch Services, which could silently reuse a stale registration. The current launcher executes the installed helper directly.
 
 ### A Run/Quit window appears
 
-Pull the latest version and re-run `./install-helper.sh`. Repeated rebuilds can leave a stale Launch Services registration, causing the Shortcut to open an older helper. The current installer unregisters the replaced app and registers the new build.
+Pull the latest version, re-run `./install-helper.sh`, and replace the Shortcut's AppleScript. The current helper is a native background app and cannot display AppleScript's Run/Quit startup screen.
 
 ### Teams focuses but mute does not change
 
-Confirm a meeting or call is open and its **Mute mic** or **Unmute mic** button is visible. Fully quit and reopen Teams if its meeting controls are not responding.
+Open **Teams → Settings and more → Keyboard shortcuts** and confirm **Toggle mute** is assigned to **Shift-Command-M**. Fully quit and reopen Teams after changing its shortcut preset.
+
+The helper waits for the keys used by the global shortcut to be released before sending Teams' shortcut.
+
+Microsoft documents **Shift-Command-M** as the macOS mute toggle in its [Teams keyboard shortcut reference](https://support.microsoft.com/en-us/accessibility/teams/keyboard-shortcuts-for-microsoft-teams).
 
 ### Teams asks macOS to locate an application
 
 Use the current helper from this repository. It restores the previous app by process ID instead of treating the process name as an application name.
 
+### Collect a local diagnostic
+
+Run the helper without toggling the microphone:
+
+```sh
+~/Applications/Teams\ Mute\ Helper.app/Contents/MacOS/TeamsMuteHelper --diagnose
+tail -20 ~/Library/Logs/Teams\ Mute\ Helper.log
+```
+
+For a logged mute toggle, replace `--diagnose` with `--verbose`. Normal shortcut runs do not write a log. Each diagnostic or verbose run replaces the previous log.
+
+The log contains helper status, delivery modes, mic state, timestamps, and process identifiers. It does not contain meeting titles, messages, participant names, or audio.
+
 ## Files
 
 - [`install-helper.sh`](install-helper.sh): builds, signs, and installs the background helper.
-- [`teams-mute-helper.applescript`](teams-mute-helper.applescript): performs the Teams mute toggle.
+- [`TeamsMuteHelper.m`](TeamsMuteHelper.m): activates Teams, sends its mute shortcut, and verifies the state change.
+- [`TeamsMuteHelper-Info.plist`](TeamsMuteHelper-Info.plist): defines the native background app bundle.
 - [`toggle-teams-mute.applescript`](toggle-teams-mute.applescript): launches the helper from Shortcuts.
 
 ## Limitations
@@ -97,12 +121,11 @@ Use the current helper from this repository. It restores the previous app by pro
 - Teams must be running with a meeting or call open.
 - Teams briefly receives focus because it does not expose a system-wide mute API on macOS.
 - The helper targets the current Teams desktop app. Classic Teams uses a different bundle ID.
-- The helper recognises the English Accessibility labels **Mute mic** and **Unmute mic**.
-- The global keyboard shortcut is configured in Shortcuts, not in the AppleScript.
+- The global keyboard shortcut is configured in Shortcuts, not in the helper.
 
 ## Privacy
 
-The helper does not access audio, files, or the network. macOS Accessibility permission is used to identify the active app, search Teams' local Accessibility tree for the microphone control, press that control, and restore focus. It does not retain or transmit Accessibility data. The complete automation is readable in this repository and is compiled locally during installation.
+The helper does not access audio, files, or the network. Accessibility permission is used to search Teams' local accessibility hierarchy for the microphone control, send Teams' mute shortcut, verify the control changed, and restore focus. Normal shortcut runs retain no activity data; local diagnostic logging is explicit and contains no meeting content. Nothing is transmitted. The complete helper source is readable in this repository and is compiled locally during installation.
 
 ## License
 

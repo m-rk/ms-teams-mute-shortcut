@@ -6,7 +6,9 @@ repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 install_dir=${TEAMS_MUTE_INSTALL_DIR:-"${HOME}/Applications"}
 app_name="Teams Mute Helper.app"
 app_path="${install_dir}/${app_name}"
-installed_executable="${app_path}/Contents/MacOS/applet"
+executable_name="TeamsMuteHelper"
+installed_executable="${app_path}/Contents/MacOS/${executable_name}"
+legacy_executable="${app_path}/Contents/MacOS/applet"
 lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 temp_dir=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/teams-mute-helper.XXXXXX")
 
@@ -17,44 +19,36 @@ trap cleanup EXIT HUP INT TERM
 
 built_app="${temp_dir}/${app_name}"
 plist="${built_app}/Contents/Info.plist"
+built_executable="${built_app}/Contents/MacOS/${executable_name}"
 
-/usr/bin/osacompile -o "$built_app" "${repo_dir}/teams-mute-helper.applescript"
+if ! /usr/bin/xcrun --sdk macosx --find clang >/dev/null 2>&1; then
+	/usr/bin/printf 'Xcode Command Line Tools are required. Run: xcode-select --install\n' >&2
+	exit 1
+fi
 
-/usr/libexec/PlistBuddy -c "Delete :CFBundleIdentifier" "$plist" >/dev/null 2>&1 || true
-/usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string io.github.m-rk.ms-teams-mute-helper" "$plist"
-
-/usr/libexec/PlistBuddy -c "Delete :OSAAppletShowStartupScreen" "$plist" >/dev/null 2>&1 || true
-/usr/libexec/PlistBuddy -c "Add :OSAAppletShowStartupScreen bool false" "$plist"
-
-/usr/libexec/PlistBuddy -c "Delete :LSUIElement" "$plist" >/dev/null 2>&1 || true
-/usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$plist"
-
-for permission_key in \
-	NSAppleMusicUsageDescription \
-	NSCalendarsUsageDescription \
-	NSCameraUsageDescription \
-	NSContactsUsageDescription \
-	NSHomeKitUsageDescription \
-	NSMicrophoneUsageDescription \
-	NSPhotoLibraryUsageDescription \
-	NSRemindersUsageDescription \
-	NSSiriUsageDescription \
-	NSSystemAdministrationUsageDescription
-do
-	/usr/libexec/PlistBuddy -c "Delete :${permission_key}" "$plist" >/dev/null 2>&1 || true
-done
+/bin/mkdir -p "${built_app}/Contents/MacOS"
+/bin/cp "${repo_dir}/TeamsMuteHelper-Info.plist" "$plist"
+/usr/bin/xcrun --sdk macosx clang \
+	-fobjc-arc \
+	-O2 \
+	-Wall \
+	-Wextra \
+	-Werror \
+	-mmacosx-version-min=13.0 \
+	-framework Cocoa \
+	-framework ApplicationServices \
+	-framework Carbon \
+	-o "$built_executable" \
+	"${repo_dir}/TeamsMuteHelper.m"
 
 /usr/bin/codesign --force --deep --sign - "$built_app"
 /bin/mkdir -p "$install_dir"
 
 if [ -e "$app_path" ]; then
 	/usr/bin/pkill -f -x "$installed_executable" >/dev/null 2>&1 || true
+	/usr/bin/pkill -f -x "$legacy_executable" >/dev/null 2>&1 || true
 	"$lsregister" -u "$app_path" >/dev/null 2>&1 || true
-
-	backup_dir="${HOME}/Library/Application Support/ms-teams-mute-shortcut/backups"
-	timestamp=$(/bin/date +%Y%m%d-%H%M%S)
-	/bin/mkdir -p "$backup_dir"
-	/bin/mv "$app_path" "${backup_dir}/Teams Mute Helper ${timestamp}.app.backup"
+	/bin/rm -rf "$app_path"
 fi
 
 /usr/bin/ditto "$built_app" "$app_path"
