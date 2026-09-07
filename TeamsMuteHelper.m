@@ -464,15 +464,32 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
 }
 
 - (void)showReadyStatus {
-    NSString *iconPath = [[NSBundle mainBundle] pathForResource:@"AppIcon" ofType:@"icns"];
-    NSImage *image = iconPath == nil ? nil : [[NSImage alloc] initWithContentsOfFile:iconPath];
-    if (image == nil) {
+    NSImage *unmuted = [NSImage imageWithSystemSymbolName:@"mic.fill"
+                                accessibilityDescription:@"Unmuted microphone"];
+    NSImage *muted = [NSImage imageWithSystemSymbolName:@"mic.slash"
+                              accessibilityDescription:@"Muted microphone"];
+    if (unmuted == nil || muted == nil) {
         [self setStatusSymbol:@"mic.slash" description:@"Teams Mute Helper — Control-Shift-Command-A"];
         return;
     }
 
-    image.size = NSMakeSize(18, 18);
-    image.template = NO;
+    NSImageSymbolConfiguration *configuration =
+        [NSImageSymbolConfiguration configurationWithPointSize:13 weight:NSFontWeightMedium];
+    unmuted = [unmuted imageWithSymbolConfiguration:configuration];
+    muted = [muted imageWithSymbolConfiguration:configuration];
+
+    NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(26, 16)];
+    [image lockFocus];
+    [unmuted drawInRect:NSMakeRect(0, 1, 12, 14)
+               fromRect:NSZeroRect
+              operation:NSCompositingOperationSourceOver
+               fraction:1.0];
+    [muted drawInRect:NSMakeRect(14, 1, 12, 14)
+             fromRect:NSZeroRect
+            operation:NSCompositingOperationSourceOver
+             fraction:1.0];
+    [image unlockFocus];
+    image.template = YES;
     _statusItem.button.image = image;
     _statusItem.button.toolTip = @"Teams Mute Helper — Control-Shift-Command-A";
 }
@@ -589,7 +606,7 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     (void)notification;
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
 
-    _statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
+    _statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:30];
     [self showReadyStatus];
 
     NSMenu *menu = [[NSMenu alloc] init];

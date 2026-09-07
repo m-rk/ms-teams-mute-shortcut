@@ -40,7 +40,7 @@ The installer:
 - starts its global hotkey listener; and
 - adds a per-user login item so the listener returns after signing in.
 
-You should see the purple Teams Mute Helper icon in the menu bar.
+You should see the Teams Mute Helper icon in the menu bar.
 
 ### 3. Allow Accessibility access
 
