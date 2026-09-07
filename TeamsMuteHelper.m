@@ -32,7 +32,7 @@ static NSString *const kHotKeyModifiersPreference = @"HotKeyModifiers";
 static NSString *const kHotKeyLabelPreference = @"HotKeyLabel";
 static NSString *const kShortcutPromptShownPreference = @"ShortcutPromptShown";
 
-@interface TeamsMuteHelperDelegate : NSObject <NSApplicationDelegate> {
+@interface TeamsMuteHelperDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate> {
     NSStatusItem *_statusItem;
     EventHotKeyRef _hotKey;
     EventHandlerRef _eventHandler;
@@ -854,6 +854,13 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     [self presentShortcutRecorderForFirstLaunch:NO];
 }
 
+- (void)menuWillOpen:(NSMenu *)menu {
+    (void)menu;
+    if (!_toggleInProgress) {
+        [self showIdleStatus];
+    }
+}
+
 - (void)openAccessibilitySettings:(id)sender {
     (void)sender;
     NSURL *url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
@@ -895,6 +902,7 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     [self showReadyStatus];
 
     NSMenu *menu = [[NSMenu alloc] init];
+    menu.delegate = self;
     _toggleMenuItem = [[NSMenuItem alloc] initWithTitle:@""
                                                 action:@selector(toggleFromMenu:)
                                          keyEquivalent:@""];
@@ -915,7 +923,7 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     accessibilityItem.target = self;
     [menu addItem:accessibilityItem];
 
-    NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit Until Next Login"
+    NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit Teams Mute Helper"
                                                       action:@selector(quitHelper:)
                                                keyEquivalent:@"q"];
     quitItem.target = self;
@@ -967,6 +975,7 @@ int main(int argc, const char *argv[]) {
         BOOL verbose = NO;
         BOOL listen = NO;
         BOOL testHotKey = NO;
+        BOOL toggleOnce = NO;
         for (int index = 1; index < argc; index++) {
             if (strcmp(argv[index], "--diagnose") == 0) {
                 diagnoseOnly = YES;
@@ -976,6 +985,8 @@ int main(int argc, const char *argv[]) {
                 listen = YES;
             } else if (strcmp(argv[index], "--test-hotkey") == 0) {
                 testHotKey = YES;
+            } else if (strcmp(argv[index], "--toggle") == 0) {
+                toggleOnce = YES;
             }
         }
         if (diagnoseOnly || verbose) {
@@ -986,7 +997,8 @@ int main(int argc, const char *argv[]) {
             return TestGlobalHotKey();
         }
 
-        if (listen) {
+        BOOL runListener = listen || (!diagnoseOnly && !verbose && !testHotKey && !toggleOnce);
+        if (runListener) {
             NSApplication *application = [NSApplication sharedApplication];
             TeamsMuteHelperDelegate *delegate = [[TeamsMuteHelperDelegate alloc] init];
             gApplicationDelegate = delegate;

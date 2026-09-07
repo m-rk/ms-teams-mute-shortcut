@@ -71,7 +71,7 @@ Click the microphone icon to:
 - toggle Teams mute without using the keyboard;
 - change or restore the global keyboard shortcut;
 - open Accessibility settings; or
-- quit the helper until the next login.
+- quit the helper. Open **Teams Mute Helper** from `~/Applications` to start it again.
 
 ## Troubleshooting
 
