@@ -1,9 +1,7 @@
 # Microsoft Teams global mute shortcut for macOS
 
 <p align="center">
-  <img src="assets/mute-mic.png" alt="Mute microphone control" width="180">
-  &nbsp;&nbsp;
-  <img src="assets/unmute-mic.png" alt="Unmute microphone control" width="180">
+  <img src="assets/app-icon.png" alt="Teams Mute Helper icon" width="220">
 </p>
 
 Toggle mute in Microsoft Teams from any macOS app with a global keyboard shortcut.
@@ -112,6 +110,7 @@ The log contains helper status, delivery modes, mic state, timestamps, and proce
 ## Files
 
 - [`install-helper.sh`](install-helper.sh): builds, signs, and installs the background helper.
+- [`assets/app-icon.svg`](assets/app-icon.svg), [`assets/app-icon.png`](assets/app-icon.png), and [`assets/AppIcon.icns`](assets/AppIcon.icns): vector source, README image, and macOS bundle icon.
 - [`TeamsMuteHelper.m`](TeamsMuteHelper.m): activates Teams, sends its mute shortcut, and verifies the state change.
 - [`TeamsMuteHelper-Info.plist`](TeamsMuteHelper-Info.plist): defines the native background app bundle.
 - [`toggle-teams-mute.applescript`](toggle-teams-mute.applescript): launches the helper from Shortcuts.

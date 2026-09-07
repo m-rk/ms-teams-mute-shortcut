@@ -20,14 +20,16 @@ trap cleanup EXIT HUP INT TERM
 built_app="${temp_dir}/${app_name}"
 plist="${built_app}/Contents/Info.plist"
 built_executable="${built_app}/Contents/MacOS/${executable_name}"
+icon="${built_app}/Contents/Resources/AppIcon.icns"
 
 if ! /usr/bin/xcrun --sdk macosx --find clang >/dev/null 2>&1; then
 	/usr/bin/printf 'Xcode Command Line Tools are required. Run: xcode-select --install\n' >&2
 	exit 1
 fi
 
-/bin/mkdir -p "${built_app}/Contents/MacOS"
+/bin/mkdir -p "${built_app}/Contents/MacOS" "${built_app}/Contents/Resources"
 /bin/cp "${repo_dir}/TeamsMuteHelper-Info.plist" "$plist"
+/bin/cp "${repo_dir}/assets/AppIcon.icns" "$icon"
 /usr/bin/xcrun --sdk macosx clang \
 	-fobjc-arc \
 	-O2 \

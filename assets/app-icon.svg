@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Teams Mute Helper icon</title>
+  <desc id="description">A split keyboard key showing an unmuted microphone and a muted microphone.</desc>
+  <defs>
+    <clipPath id="keycap-clip">
+      <rect x="94" y="143" width="836" height="753" rx="184" ry="166"/>
+    </clipPath>
+    <clipPath id="face-clip">
+      <rect x="112" y="112" width="800" height="666" rx="172" ry="155"/>
+    </clipPath>
+    <filter id="key-shadow" x="-25%" y="-25%" width="150%" height="170%">
+      <feGaussianBlur stdDeviation="20"/>
+    </filter>
+  </defs>
+
+  <ellipse cx="512" cy="914" rx="344" ry="34" fill="#24265E" opacity="0.22" filter="url(#key-shadow)"/>
+
+  <g clip-path="url(#keycap-clip)">
+    <rect x="94" y="143" width="418" height="753" fill="#7B83EB"/>
+    <rect x="512" y="143" width="418" height="753" fill="#464EB8"/>
+  </g>
+
+  <g clip-path="url(#face-clip)">
+    <rect x="112" y="112" width="400" height="666" fill="#FFFFFF"/>
+    <rect x="512" y="112" width="400" height="666" fill="#5B5FC7"/>
+  </g>
+  <rect x="112" y="112" width="800" height="666" rx="172" ry="155" fill="none" stroke="#8B8DE8" stroke-width="8" opacity="0.62"/>
+
+  <g fill="#5B5FC7" stroke="#5B5FC7" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="260" y="256" width="108" height="222" rx="54" stroke="none"/>
+    <path d="M218 384v24c0 72 42 116 96 116s96-44 96-116v-24" fill="none" stroke-width="28"/>
+    <path d="M314 524v58M270 582h88" fill="none" stroke-width="28"/>
+  </g>
+
+  <g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="656" y="256" width="108" height="208" rx="54" stroke-width="28"/>
+    <path d="M614 384v24c0 72 42 116 96 116s96-44 96-116v-24" stroke-width="28"/>
+    <path d="M710 524v58M666 582h88" stroke-width="28"/>
+  </g>
+  <path d="M620 298l180 224" fill="none" stroke="#5B5FC7" stroke-width="48" stroke-linecap="round"/>
+  <path d="M620 298l180 224" fill="none" stroke="#FFFFFF" stroke-width="28" stroke-linecap="round"/>
+</svg>
