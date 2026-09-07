@@ -26,6 +26,20 @@ typedef NS_ENUM(NSInteger, DeliveryMode) {
 
 static BOOL gLoggingEnabled = NO;
 
+@interface TeamsMuteHelperDelegate : NSObject <NSApplicationDelegate> {
+    NSStatusItem *_statusItem;
+    EventHotKeyRef _hotKey;
+    EventHandlerRef _eventHandler;
+    BOOL _hotKeyRegistered;
+    BOOL _toggleInProgress;
+}
+
+- (void)handleGlobalHotKey;
+
+@end
+
+static TeamsMuteHelperDelegate *gApplicationDelegate = nil;
+
 static NSString *LogPath(void) {
     return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Logs/Teams Mute Helper.log"];
 }
@@ -261,6 +275,20 @@ static void SendCGShortcut(DeliveryMode mode, pid_t teamsPID) {
     PostCGKey(mode, teamsPID, kVK_Command, NO, 0);
 }
 
+static void PostGlobalHotKeyForTesting(void) {
+    CGEventFlags command = kCGEventFlagMaskCommand;
+    CGEventFlags commandControl = command | kCGEventFlagMaskControl;
+    CGEventFlags modifiers = commandControl | kCGEventFlagMaskShift;
+    PostCGKey(DeliveryModeHID, 0, kVK_Command, YES, command);
+    PostCGKey(DeliveryModeHID, 0, kVK_Control, YES, commandControl);
+    PostCGKey(DeliveryModeHID, 0, kVK_Shift, YES, modifiers);
+    PostCGKey(DeliveryModeHID, 0, kVK_ANSI_A, YES, modifiers);
+    PostCGKey(DeliveryModeHID, 0, kVK_ANSI_A, NO, modifiers);
+    PostCGKey(DeliveryModeHID, 0, kVK_Shift, NO, commandControl);
+    PostCGKey(DeliveryModeHID, 0, kVK_Control, NO, command);
+    PostCGKey(DeliveryModeHID, 0, kVK_Command, NO, 0);
+}
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 static void SendAXShortcut(pid_t teamsPID) {
@@ -367,30 +395,278 @@ static int RunHelper(BOOL diagnoseOnly) {
     return changed || unverified ? 0 : 5;
 }
 
+static int TestGlobalHotKey(void) {
+    if (!AXIsProcessTrusted()) {
+        WriteLog(@"Accessibility permission is required to test the global hotkey");
+        return 2;
+    }
+
+    NSRunningApplication *teams = [[NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.microsoft.teams2"] firstObject];
+    if (teams == nil || teams.terminated) {
+        WriteLog(@"Microsoft Teams is not running");
+        return 3;
+    }
+
+    MicContext before = FindMicContext(teams);
+    if (before.state == MicStateUnknown) {
+        WriteLog(@"No active Teams meeting was found");
+        ReleaseMicContext(&before);
+        return 4;
+    }
+
+    WriteLog(@"Posting Control-Shift-Command-A for listener testing; before=%@", MicStateName(before.state));
+    PostGlobalHotKeyForTesting();
+
+    BOOL changed = NO;
+    for (NSInteger attempt = 0; attempt < 20 && !changed; attempt++) {
+        usleep(200000);
+        MicContext after = FindMicContext(teams);
+        changed = after.state != MicStateUnknown && after.state != before.state;
+        ReleaseMicContext(&after);
+    }
+
+    WriteLog(@"Global hotkey test changed=%@", changed ? @"yes" : @"no");
+    ReleaseMicContext(&before);
+    return changed ? 0 : 5;
+}
+
+static int RunLockedHelper(BOOL diagnoseOnly) {
+    int lockFile = open("/tmp/io.github.m-rk.ms-teams-mute-helper.lock", O_CREAT | O_RDWR, 0600);
+    if (lockFile < 0 || flock(lockFile, LOCK_EX | LOCK_NB) != 0) {
+        WriteLog(@"Another helper instance is already running");
+        if (lockFile >= 0) {
+            close(lockFile);
+        }
+        return 0;
+    }
+
+    int result = RunHelper(diagnoseOnly);
+    flock(lockFile, LOCK_UN);
+    close(lockFile);
+    return result;
+}
+
+static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef event, void *context) {
+    (void)nextHandler;
+    (void)event;
+    TeamsMuteHelperDelegate *delegate = (__bridge TeamsMuteHelperDelegate *)context;
+    [delegate handleGlobalHotKey];
+    return noErr;
+}
+
+@implementation TeamsMuteHelperDelegate
+
+- (void)setStatusSymbol:(NSString *)symbolName description:(NSString *)description {
+    NSImage *image = [NSImage imageWithSystemSymbolName:symbolName accessibilityDescription:description];
+    image.template = YES;
+    _statusItem.button.image = image;
+    _statusItem.button.toolTip = description;
+}
+
+- (void)showReadyStatus {
+    NSString *iconPath = [[NSBundle mainBundle] pathForResource:@"AppIcon" ofType:@"icns"];
+    NSImage *image = iconPath == nil ? nil : [[NSImage alloc] initWithContentsOfFile:iconPath];
+    if (image == nil) {
+        [self setStatusSymbol:@"mic.slash" description:@"Teams Mute Helper — Control-Shift-Command-A"];
+        return;
+    }
+
+    image.size = NSMakeSize(18, 18);
+    image.template = NO;
+    _statusItem.button.image = image;
+    _statusItem.button.toolTip = @"Teams Mute Helper — Control-Shift-Command-A";
+}
+
+- (void)showIdleStatus {
+    if (!_hotKeyRegistered) {
+        [self setStatusSymbol:@"exclamationmark.triangle"
+                  description:@"Control-Shift-Command-A is already in use"];
+    } else if (!AXIsProcessTrusted()) {
+        [self setStatusSymbol:@"exclamationmark.triangle"
+                  description:@"Teams Mute Helper needs Accessibility access"];
+    } else {
+        [self showReadyStatus];
+    }
+}
+
+- (void)showResult:(int)result {
+    if (result == 0) {
+        [self showIdleStatus];
+        return;
+    }
+
+    NSString *description = @"Teams Mute Helper could not toggle mute";
+    if (result == 2) {
+        description = @"Teams Mute Helper needs Accessibility access";
+    } else if (result == 3) {
+        description = @"Microsoft Teams is not running";
+    } else if (result == 4) {
+        description = @"No active Teams meeting was found";
+    }
+    [self setStatusSymbol:@"exclamationmark.triangle" description:description];
+
+    if (result == 2) {
+        return;
+    }
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if (!self->_toggleInProgress) {
+            [self showIdleStatus];
+        }
+    });
+}
+
+- (void)requestToggle {
+    if (_toggleInProgress) {
+        WriteLog(@"Ignored overlapping hotkey press");
+        return;
+    }
+
+    _toggleInProgress = YES;
+    [self setStatusSymbol:@"mic.badge.plus" description:@"Toggling Teams mute…"];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        int result = RunLockedHelper(NO);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_toggleInProgress = NO;
+            [self showResult:result];
+        });
+    });
+}
+
+- (void)handleGlobalHotKey {
+    [self requestToggle];
+}
+
+- (void)toggleFromMenu:(id)sender {
+    (void)sender;
+    [self requestToggle];
+}
+
+- (void)openAccessibilitySettings:(id)sender {
+    (void)sender;
+    NSURL *url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
+    [[NSWorkspace sharedWorkspace] openURL:url];
+}
+
+- (void)quitHelper:(id)sender {
+    (void)sender;
+    [NSApp terminate:nil];
+}
+
+- (BOOL)registerGlobalHotKey {
+    EventTypeSpec eventType = {kEventClassKeyboard, kEventHotKeyPressed};
+    OSStatus handlerStatus = InstallApplicationEventHandler(
+        HandleHotKeyEvent,
+        1,
+        &eventType,
+        (__bridge void *)self,
+        &_eventHandler
+    );
+    if (handlerStatus != noErr) {
+        WriteLog(@"Could not install hotkey handler status=%d", (int)handlerStatus);
+        return NO;
+    }
+
+    EventHotKeyID hotKeyID = {'TMHM', 1};
+    OSStatus hotKeyStatus = RegisterEventHotKey(
+        kVK_ANSI_A,
+        cmdKey | controlKey | shiftKey,
+        hotKeyID,
+        GetApplicationEventTarget(),
+        0,
+        &_hotKey
+    );
+    if (hotKeyStatus != noErr) {
+        WriteLog(@"Could not register hotkey status=%d", (int)hotKeyStatus);
+        RemoveEventHandler(_eventHandler);
+        _eventHandler = NULL;
+        return NO;
+    }
+    return YES;
+}
+
+- (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    (void)notification;
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+
+    _statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
+    [self showReadyStatus];
+
+    NSMenu *menu = [[NSMenu alloc] init];
+    NSMenuItem *toggleItem = [[NSMenuItem alloc] initWithTitle:@"Toggle Teams Mute (⌃⇧⌘A)"
+                                                        action:@selector(toggleFromMenu:)
+                                                 keyEquivalent:@""];
+    toggleItem.target = self;
+    [menu addItem:toggleItem];
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *accessibilityItem = [[NSMenuItem alloc] initWithTitle:@"Open Accessibility Settings…"
+                                                               action:@selector(openAccessibilitySettings:)
+                                                        keyEquivalent:@""];
+    accessibilityItem.target = self;
+    [menu addItem:accessibilityItem];
+
+    NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit Until Next Login"
+                                                      action:@selector(quitHelper:)
+                                               keyEquivalent:@"q"];
+    quitItem.target = self;
+    [menu addItem:quitItem];
+    _statusItem.menu = menu;
+
+    NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
+    BOOL trusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+    _hotKeyRegistered = [self registerGlobalHotKey];
+    WriteLog(@"Listener started trusted=%@ hotkey_registered=%@",
+             trusted ? @"yes" : @"no", _hotKeyRegistered ? @"yes" : @"no");
+    [self showIdleStatus];
+}
+
+- (void)applicationWillTerminate:(NSNotification *)notification {
+    (void)notification;
+    if (_hotKey != NULL) {
+        UnregisterEventHotKey(_hotKey);
+    }
+    if (_eventHandler != NULL) {
+        RemoveEventHandler(_eventHandler);
+    }
+}
+
+@end
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         BOOL diagnoseOnly = NO;
         BOOL verbose = NO;
+        BOOL listen = NO;
+        BOOL testHotKey = NO;
         for (int index = 1; index < argc; index++) {
             if (strcmp(argv[index], "--diagnose") == 0) {
                 diagnoseOnly = YES;
             } else if (strcmp(argv[index], "--verbose") == 0) {
                 verbose = YES;
+            } else if (strcmp(argv[index], "--listen") == 0) {
+                listen = YES;
+            } else if (strcmp(argv[index], "--test-hotkey") == 0) {
+                testHotKey = YES;
             }
         }
         if (diagnoseOnly || verbose) {
             StartLogging();
         }
 
-        int lockFile = open("/tmp/io.github.m-rk.ms-teams-mute-helper.lock", O_CREAT | O_RDWR, 0600);
-        if (lockFile < 0 || flock(lockFile, LOCK_EX | LOCK_NB) != 0) {
-            WriteLog(@"Another helper instance is already running");
+        if (testHotKey) {
+            return TestGlobalHotKey();
+        }
+
+        if (listen) {
+            NSApplication *application = [NSApplication sharedApplication];
+            TeamsMuteHelperDelegate *delegate = [[TeamsMuteHelperDelegate alloc] init];
+            gApplicationDelegate = delegate;
+            application.delegate = delegate;
+            [application run];
             return 0;
         }
 
-        int result = RunHelper(diagnoseOnly);
-        flock(lockFile, LOCK_UN);
-        close(lockFile);
-        return result;
+        return RunLockedHelper(diagnoseOnly);
     }
 }
