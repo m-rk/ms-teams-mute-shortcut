@@ -42,12 +42,15 @@ static NSString *const kShortcutPromptShownPreference = @"ShortcutPromptShown";
     UInt32 _hotKeyModifiers;
     NSString *_hotKeyLabel;
     NSMenuItem *_toggleMenuItem;
+    BOOL _shortcutDialogOpen;
     BOOL _recordingShortcut;
     UInt32 _recordingKeyCode;
     UInt32 _recordingModifiers;
     NSString *_recordingLabel;
     NSTextField *_recordingField;
     NSTextField *_recordingHint;
+    NSButton *_recordingButton;
+    NSButton *_shortcutSaveButton;
 }
 
 - (void)handleGlobalHotKey;
@@ -689,12 +692,12 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
 }
 
 - (void)handleGlobalHotKey {
-    if (_recordingShortcut) {
-        _recordingKeyCode = _hotKeyKeyCode;
-        _recordingModifiers = _hotKeyModifiers;
-        _recordingLabel = _hotKeyLabel;
-        _recordingField.stringValue = [self shortcutDisplayString];
-        _recordingHint.stringValue = @"Ready to save";
+    if (_shortcutDialogOpen) {
+        if (_recordingShortcut) {
+            [self completeShortcutRecordingWithKeyCode:_hotKeyKeyCode
+                                            modifiers:_hotKeyModifiers
+                                                label:_hotKeyLabel];
+        }
         return;
     }
     [self requestToggle];
@@ -761,58 +764,112 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     return NO;
 }
 
+- (void)beginShortcutRecording:(id)sender {
+    (void)sender;
+    if (!_shortcutDialogOpen || _recordingShortcut) {
+        return;
+    }
+
+    _recordingShortcut = YES;
+    _recordingField.stringValue = @"Press shortcut now…";
+    _recordingHint.stringValue = @"Use Control, Option, Shift, or Command";
+    _recordingButton.title = @"Listening…";
+    _recordingButton.enabled = NO;
+    _shortcutSaveButton.enabled = NO;
+}
+
+- (void)cancelShortcutRecording {
+    _recordingShortcut = NO;
+    _recordingField.stringValue = HotKeyDisplayString(_recordingModifiers, _recordingLabel);
+    _recordingHint.stringValue = @"Recording cancelled";
+    _recordingButton.title = @"Record New Shortcut";
+    _recordingButton.enabled = YES;
+    _shortcutSaveButton.enabled = YES;
+}
+
+- (void)completeShortcutRecordingWithKeyCode:(UInt32)keyCode
+                                   modifiers:(UInt32)modifiers
+                                       label:(NSString *)label {
+    if (!_recordingShortcut) {
+        return;
+    }
+
+    _recordingKeyCode = keyCode;
+    _recordingModifiers = modifiers;
+    _recordingLabel = label;
+    _recordingShortcut = NO;
+    _recordingField.stringValue = HotKeyDisplayString(modifiers, label);
+    _recordingHint.stringValue = @"Ready to save";
+    _recordingButton.title = @"Record Again";
+    _recordingButton.enabled = YES;
+    _shortcutSaveButton.enabled = YES;
+}
+
 - (void)presentShortcutRecorderForFirstLaunch:(BOOL)firstLaunch {
     NSAlert *alert = [[NSAlert alloc] init];
     alert.messageText = firstLaunch ? @"Choose Your Mute Shortcut" : @"Keyboard Shortcut";
     alert.informativeText = firstLaunch
-        ? @"Control-Shift-Command-A is ready to use. Keep it, or press a different shortcut using Control, Option, Shift, or Command."
-        : @"Press a shortcut using Control, Option, Shift, or Command. This changes the global helper shortcut; Teams still receives Shift-Command-M.";
+        ? @"Control-Shift-Command-A is ready to use. Keep it, or click Record a Different Shortcut when you're ready."
+        : @"Your current global shortcut is shown below. Click Record New Shortcut when you're ready to change it. Teams still receives Shift-Command-M.";
 
-    NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 360, 74)];
+    NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 360, 116)];
     NSTextField *recording = [NSTextField labelWithString:[self shortcutDisplayString]];
-    recording.frame = NSMakeRect(0, 25, 360, 36);
+    recording.frame = NSMakeRect(0, 67, 360, 36);
     recording.alignment = NSTextAlignmentCenter;
     recording.font = [NSFont monospacedSystemFontOfSize:24 weight:NSFontWeightSemibold];
     [accessory addSubview:recording];
 
-    NSTextField *hint = [NSTextField labelWithString:@"Press the new key combination now"];
-    hint.frame = NSMakeRect(0, 2, 360, 18);
+    NSButton *recordButton = [NSButton buttonWithTitle:firstLaunch
+                                                       ? @"Record a Different Shortcut"
+                                                       : @"Record New Shortcut"
+                                               target:self
+                                               action:@selector(beginShortcutRecording:)];
+    recordButton.frame = NSMakeRect(75, 31, 210, 30);
+    recordButton.bezelStyle = NSBezelStyleRounded;
+    [accessory addSubview:recordButton];
+
+    NSTextField *hint = [NSTextField labelWithString:@"Nothing is recorded until you click the button"];
+    hint.frame = NSMakeRect(0, 4, 360, 18);
     hint.alignment = NSTextAlignmentCenter;
     hint.textColor = NSColor.secondaryLabelColor;
     [accessory addSubview:hint];
     alert.accessoryView = accessory;
 
-    [alert addButtonWithTitle:firstLaunch ? @"Use Shortcut" : @"Save"];
+    NSButton *saveButton = [alert addButtonWithTitle:firstLaunch ? @"Use Shortcut" : @"Save"];
     [alert addButtonWithTitle:@"Cancel"];
     [alert addButtonWithTitle:@"Restore Default"];
 
-    _recordingShortcut = YES;
+    _shortcutDialogOpen = YES;
+    _recordingShortcut = NO;
     _recordingKeyCode = _hotKeyKeyCode;
     _recordingModifiers = _hotKeyModifiers;
     _recordingLabel = _hotKeyLabel;
     _recordingField = recording;
     _recordingHint = hint;
+    _recordingButton = recordButton;
+    _shortcutSaveButton = saveButton;
     id monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                                        handler:^NSEvent *(NSEvent *event) {
+        if (!self->_recordingShortcut) {
+            return event;
+        }
         if (event.isARepeat) {
             return nil;
         }
         UInt32 modifiers = CarbonModifiersFromEvent(event.modifierFlags);
         if (modifiers == 0) {
-            if (event.keyCode == kVK_Escape || event.keyCode == kVK_Return ||
-                event.keyCode == kVK_ANSI_KeypadEnter) {
-                return event;
+            if (event.keyCode == kVK_Escape) {
+                [self cancelShortcutRecording];
+                return nil;
             }
             NSBeep();
             hint.stringValue = @"Include at least one modifier key";
             return nil;
         }
 
-        self->_recordingKeyCode = event.keyCode;
-        self->_recordingModifiers = modifiers;
-        self->_recordingLabel = KeyLabelFromEvent(event);
-        recording.stringValue = HotKeyDisplayString(self->_recordingModifiers, self->_recordingLabel);
-        hint.stringValue = @"Ready to save";
+        [self completeShortcutRecordingWithKeyCode:event.keyCode
+                                         modifiers:modifiers
+                                             label:KeyLabelFromEvent(event)];
         return nil;
     }];
 
@@ -821,9 +878,12 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     UInt32 candidateKeyCode = _recordingKeyCode;
     UInt32 candidateModifiers = _recordingModifiers;
     NSString *candidateLabel = _recordingLabel;
+    _shortcutDialogOpen = NO;
     _recordingShortcut = NO;
     _recordingField = nil;
     _recordingHint = nil;
+    _recordingButton = nil;
+    _shortcutSaveButton = nil;
 
     if (response == NSAlertSecondButtonReturn) {
         return;

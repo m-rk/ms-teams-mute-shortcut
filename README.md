@@ -40,7 +40,7 @@ The installer:
 - starts its global hotkey listener; and
 - adds a per-user login item so the listener returns after signing in.
 
-On the first launch, the helper asks you to choose a global shortcut. **Control-Shift-Command-A** is preselected: click **Use Shortcut** to keep it, or press a different combination before continuing. You can change it later from the menu bar.
+On the first launch, the helper asks you to choose a global shortcut. **Control-Shift-Command-A** is preselected: click **Use Shortcut** to keep it. To choose another, click **Record a Different Shortcut**, then press the combination. You can change it later from the menu bar.
 
 You should then see the Teams Mute Helper icon in the menu bar.
 
@@ -50,7 +50,7 @@ Open **System Settings → Privacy & Security → Accessibility**, add `~/Applic
 
 Join a Teams meeting and press **Control-Shift-Command-A** from another app. Teams should toggle mute and return focus to the previous app.
 
-To use a different key combination, click the helper icon and choose **Keyboard Shortcut…**. Press the new combination and save it. The choice persists across app and Mac restarts. **Restore Default** returns to Control-Shift-Command-A.
+To use a different key combination, click the helper icon and choose **Keyboard Shortcut…**. Nothing is recorded until you click **Record New Shortcut**. Press one combination, then save it. The recorder stops listening after that one combination. The choice persists across app and Mac restarts. **Restore Default** returns to Control-Shift-Command-A.
 
 ## How it works
 
