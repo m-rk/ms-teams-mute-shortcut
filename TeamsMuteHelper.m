@@ -25,6 +25,11 @@ typedef NS_ENUM(NSInteger, DeliveryMode) {
 };
 
 static BOOL gLoggingEnabled = NO;
+static const UInt32 kDefaultHotKeyKeyCode = kVK_ANSI_A;
+static const UInt32 kDefaultHotKeyModifiers = cmdKey | controlKey | shiftKey;
+static NSString *const kHotKeyKeyCodePreference = @"HotKeyKeyCode";
+static NSString *const kHotKeyModifiersPreference = @"HotKeyModifiers";
+static NSString *const kHotKeyLabelPreference = @"HotKeyLabel";
 
 @interface TeamsMuteHelperDelegate : NSObject <NSApplicationDelegate> {
     NSStatusItem *_statusItem;
@@ -32,6 +37,10 @@ static BOOL gLoggingEnabled = NO;
     EventHandlerRef _eventHandler;
     BOOL _hotKeyRegistered;
     BOOL _toggleInProgress;
+    UInt32 _hotKeyKeyCode;
+    UInt32 _hotKeyModifiers;
+    NSString *_hotKeyLabel;
+    NSMenuItem *_toggleMenuItem;
 }
 
 - (void)handleGlobalHotKey;
@@ -39,6 +48,105 @@ static BOOL gLoggingEnabled = NO;
 @end
 
 static TeamsMuteHelperDelegate *gApplicationDelegate = nil;
+
+static void LoadHotKeyPreference(UInt32 *keyCode, UInt32 *modifiers, NSString **label) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSNumber *savedKeyCode = [defaults objectForKey:kHotKeyKeyCodePreference];
+    NSNumber *savedModifiers = [defaults objectForKey:kHotKeyModifiersPreference];
+    NSString *savedLabel = [defaults stringForKey:kHotKeyLabelPreference];
+
+    UInt32 allowedModifiers = cmdKey | controlKey | shiftKey | optionKey;
+    UInt32 candidateModifiers = savedModifiers != nil ? savedModifiers.unsignedIntValue : 0;
+    if (savedKeyCode == nil || (candidateModifiers & allowedModifiers) == 0) {
+        *keyCode = kDefaultHotKeyKeyCode;
+        *modifiers = kDefaultHotKeyModifiers;
+        *label = @"A";
+        return;
+    }
+
+    *keyCode = savedKeyCode.unsignedIntValue;
+    *modifiers = candidateModifiers & allowedModifiers;
+    *label = savedLabel.length > 0 ? savedLabel : [NSString stringWithFormat:@"Key %u", *keyCode];
+}
+
+static void SaveHotKeyPreference(UInt32 keyCode, UInt32 modifiers, NSString *label) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setInteger:keyCode forKey:kHotKeyKeyCodePreference];
+    [defaults setInteger:modifiers forKey:kHotKeyModifiersPreference];
+    [defaults setObject:label forKey:kHotKeyLabelPreference];
+}
+
+static NSString *HotKeyDisplayString(UInt32 modifiers, NSString *label) {
+    NSMutableString *display = [NSMutableString string];
+    if ((modifiers & controlKey) != 0) {
+        [display appendString:@"⌃"];
+    }
+    if ((modifiers & optionKey) != 0) {
+        [display appendString:@"⌥"];
+    }
+    if ((modifiers & shiftKey) != 0) {
+        [display appendString:@"⇧"];
+    }
+    if ((modifiers & cmdKey) != 0) {
+        [display appendString:@"⌘"];
+    }
+    [display appendString:label];
+    return display;
+}
+
+static UInt32 CarbonModifiersFromEvent(NSEventModifierFlags flags) {
+    UInt32 modifiers = 0;
+    if ((flags & NSEventModifierFlagCommand) != 0) {
+        modifiers |= cmdKey;
+    }
+    if ((flags & NSEventModifierFlagControl) != 0) {
+        modifiers |= controlKey;
+    }
+    if ((flags & NSEventModifierFlagShift) != 0) {
+        modifiers |= shiftKey;
+    }
+    if ((flags & NSEventModifierFlagOption) != 0) {
+        modifiers |= optionKey;
+    }
+    return modifiers;
+}
+
+static NSString *KeyLabelFromEvent(NSEvent *event) {
+    NSString *characters = event.charactersIgnoringModifiers;
+    if (characters.length == 0) {
+        return [NSString stringWithFormat:@"Key %hu", event.keyCode];
+    }
+
+    unichar character = [characters characterAtIndex:0];
+    switch (character) {
+        case NSUpArrowFunctionKey: return @"↑";
+        case NSDownArrowFunctionKey: return @"↓";
+        case NSLeftArrowFunctionKey: return @"←";
+        case NSRightArrowFunctionKey: return @"→";
+        case NSHomeFunctionKey: return @"Home";
+        case NSEndFunctionKey: return @"End";
+        case NSPageUpFunctionKey: return @"Page Up";
+        case NSPageDownFunctionKey: return @"Page Down";
+        case NSDeleteFunctionKey: return @"⌫";
+        case NSDeleteCharFunctionKey: return @"⌦";
+        case NSF1FunctionKey: return @"F1";
+        case NSF2FunctionKey: return @"F2";
+        case NSF3FunctionKey: return @"F3";
+        case NSF4FunctionKey: return @"F4";
+        case NSF5FunctionKey: return @"F5";
+        case NSF6FunctionKey: return @"F6";
+        case NSF7FunctionKey: return @"F7";
+        case NSF8FunctionKey: return @"F8";
+        case NSF9FunctionKey: return @"F9";
+        case NSF10FunctionKey: return @"F10";
+        case NSF11FunctionKey: return @"F11";
+        case NSF12FunctionKey: return @"F12";
+        case '\r': return @"↩";
+        case '\t': return @"⇥";
+        case ' ': return @"Space";
+        default: return characters.uppercaseString;
+    }
+}
 
 static NSString *LogPath(void) {
     return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Logs/Teams Mute Helper.log"];
@@ -275,18 +383,43 @@ static void SendCGShortcut(DeliveryMode mode, pid_t teamsPID) {
     PostCGKey(mode, teamsPID, kVK_Command, NO, 0);
 }
 
-static void PostGlobalHotKeyForTesting(void) {
-    CGEventFlags command = kCGEventFlagMaskCommand;
-    CGEventFlags commandControl = command | kCGEventFlagMaskControl;
-    CGEventFlags modifiers = commandControl | kCGEventFlagMaskShift;
-    PostCGKey(DeliveryModeHID, 0, kVK_Command, YES, command);
-    PostCGKey(DeliveryModeHID, 0, kVK_Control, YES, commandControl);
-    PostCGKey(DeliveryModeHID, 0, kVK_Shift, YES, modifiers);
-    PostCGKey(DeliveryModeHID, 0, kVK_ANSI_A, YES, modifiers);
-    PostCGKey(DeliveryModeHID, 0, kVK_ANSI_A, NO, modifiers);
-    PostCGKey(DeliveryModeHID, 0, kVK_Shift, NO, commandControl);
-    PostCGKey(DeliveryModeHID, 0, kVK_Control, NO, command);
-    PostCGKey(DeliveryModeHID, 0, kVK_Command, NO, 0);
+static void PostGlobalHotKeyForTesting(UInt32 keyCode, UInt32 carbonModifiers) {
+    CGEventFlags flags = 0;
+    if ((carbonModifiers & cmdKey) != 0) {
+        flags |= kCGEventFlagMaskCommand;
+        PostCGKey(DeliveryModeHID, 0, kVK_Command, YES, flags);
+    }
+    if ((carbonModifiers & controlKey) != 0) {
+        flags |= kCGEventFlagMaskControl;
+        PostCGKey(DeliveryModeHID, 0, kVK_Control, YES, flags);
+    }
+    if ((carbonModifiers & optionKey) != 0) {
+        flags |= kCGEventFlagMaskAlternate;
+        PostCGKey(DeliveryModeHID, 0, kVK_Option, YES, flags);
+    }
+    if ((carbonModifiers & shiftKey) != 0) {
+        flags |= kCGEventFlagMaskShift;
+        PostCGKey(DeliveryModeHID, 0, kVK_Shift, YES, flags);
+    }
+
+    PostCGKey(DeliveryModeHID, 0, (CGKeyCode)keyCode, YES, flags);
+    PostCGKey(DeliveryModeHID, 0, (CGKeyCode)keyCode, NO, flags);
+
+    if ((carbonModifiers & shiftKey) != 0) {
+        flags &= ~kCGEventFlagMaskShift;
+        PostCGKey(DeliveryModeHID, 0, kVK_Shift, NO, flags);
+    }
+    if ((carbonModifiers & optionKey) != 0) {
+        flags &= ~kCGEventFlagMaskAlternate;
+        PostCGKey(DeliveryModeHID, 0, kVK_Option, NO, flags);
+    }
+    if ((carbonModifiers & controlKey) != 0) {
+        flags &= ~kCGEventFlagMaskControl;
+        PostCGKey(DeliveryModeHID, 0, kVK_Control, NO, flags);
+    }
+    if ((carbonModifiers & cmdKey) != 0) {
+        PostCGKey(DeliveryModeHID, 0, kVK_Command, NO, 0);
+    }
 }
 
 #pragma clang diagnostic push
@@ -414,8 +547,13 @@ static int TestGlobalHotKey(void) {
         return 4;
     }
 
-    WriteLog(@"Posting Control-Shift-Command-A for listener testing; before=%@", MicStateName(before.state));
-    PostGlobalHotKeyForTesting();
+    UInt32 keyCode = 0;
+    UInt32 modifiers = 0;
+    NSString *label = nil;
+    LoadHotKeyPreference(&keyCode, &modifiers, &label);
+    WriteLog(@"Posting %@ for listener testing; before=%@",
+             HotKeyDisplayString(modifiers, label), MicStateName(before.state));
+    PostGlobalHotKeyForTesting(keyCode, modifiers);
 
     BOOL changed = NO;
     for (NSInteger attempt = 0; attempt < 20 && !changed; attempt++) {
@@ -463,41 +601,33 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     _statusItem.button.toolTip = description;
 }
 
+- (NSString *)shortcutDisplayString {
+    return HotKeyDisplayString(_hotKeyModifiers, _hotKeyLabel);
+}
+
+- (void)updateShortcutMenu {
+    _toggleMenuItem.title = [NSString stringWithFormat:@"Toggle Teams Mute (%@)", [self shortcutDisplayString]];
+}
+
 - (void)showReadyStatus {
-    NSImage *unmuted = [NSImage imageWithSystemSymbolName:@"mic.fill"
-                                accessibilityDescription:@"Unmuted microphone"];
-    NSImage *muted = [NSImage imageWithSystemSymbolName:@"mic.slash"
-                              accessibilityDescription:@"Muted microphone"];
-    if (unmuted == nil || muted == nil) {
-        [self setStatusSymbol:@"mic.slash" description:@"Teams Mute Helper — Control-Shift-Command-A"];
+    NSString *description = [NSString stringWithFormat:@"Teams Mute Helper — %@", [self shortcutDisplayString]];
+    NSString *imagePath = [[NSBundle mainBundle] pathForResource:@"MenuBarIcon" ofType:@"png"];
+    NSImage *image = imagePath != nil ? [[NSImage alloc] initWithContentsOfFile:imagePath] : nil;
+    if (image == nil) {
+        [self setStatusSymbol:@"mic.slash" description:description];
         return;
     }
 
-    NSImageSymbolConfiguration *configuration =
-        [NSImageSymbolConfiguration configurationWithPointSize:13 weight:NSFontWeightMedium];
-    unmuted = [unmuted imageWithSymbolConfiguration:configuration];
-    muted = [muted imageWithSymbolConfiguration:configuration];
-
-    NSImage *image = [[NSImage alloc] initWithSize:NSMakeSize(26, 16)];
-    [image lockFocus];
-    [unmuted drawInRect:NSMakeRect(0, 1, 12, 14)
-               fromRect:NSZeroRect
-              operation:NSCompositingOperationSourceOver
-               fraction:1.0];
-    [muted drawInRect:NSMakeRect(14, 1, 12, 14)
-             fromRect:NSZeroRect
-            operation:NSCompositingOperationSourceOver
-             fraction:1.0];
-    [image unlockFocus];
+    image.size = NSMakeSize(18, 18);
     image.template = YES;
     _statusItem.button.image = image;
-    _statusItem.button.toolTip = @"Teams Mute Helper — Control-Shift-Command-A";
+    _statusItem.button.toolTip = description;
 }
 
 - (void)showIdleStatus {
     if (!_hotKeyRegistered) {
         [self setStatusSymbol:@"exclamationmark.triangle"
-                  description:@"Control-Shift-Command-A is already in use"];
+                  description:[NSString stringWithFormat:@"%@ is already in use", [self shortcutDisplayString]]];
     } else if (!AXIsProcessTrusted()) {
         [self setStatusSymbol:@"exclamationmark.triangle"
                   description:@"Teams Mute Helper needs Accessibility access"];
@@ -559,6 +689,141 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     [self requestToggle];
 }
 
+- (void)showShortcutConflictForDisplay:(NSString *)display {
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.alertStyle = NSAlertStyleWarning;
+    alert.messageText = @"That shortcut is already in use";
+    alert.informativeText = [NSString stringWithFormat:@"%@ is registered by another app. Your previous shortcut is still active.", display];
+    [alert addButtonWithTitle:@"OK"];
+    [alert runModal];
+}
+
+- (BOOL)replaceHotKeyWithKeyCode:(UInt32)keyCode modifiers:(UInt32)modifiers {
+    if (_hotKeyRegistered && _hotKeyKeyCode == keyCode && _hotKeyModifiers == modifiers) {
+        return YES;
+    }
+
+    UInt32 previousKeyCode = _hotKeyKeyCode;
+    UInt32 previousModifiers = _hotKeyModifiers;
+    BOOL hadPreviousHotKey = _hotKey != NULL;
+    if (_hotKey != NULL) {
+        UnregisterEventHotKey(_hotKey);
+        _hotKey = NULL;
+    }
+
+    EventHotKeyID hotKeyID = {'TMHM', 1};
+    EventHotKeyRef replacement = NULL;
+    OSStatus status = RegisterEventHotKey(
+        keyCode,
+        modifiers,
+        hotKeyID,
+        GetApplicationEventTarget(),
+        0,
+        &replacement
+    );
+    if (status == noErr) {
+        _hotKey = replacement;
+        _hotKeyRegistered = YES;
+        WriteLog(@"Registered hotkey key_code=%u modifiers=%u", keyCode, modifiers);
+        return YES;
+    }
+
+    WriteLog(@"Could not register hotkey key_code=%u modifiers=%u status=%d", keyCode, modifiers, (int)status);
+    _hotKeyRegistered = NO;
+    if (hadPreviousHotKey) {
+        OSStatus restoreStatus = RegisterEventHotKey(
+            previousKeyCode,
+            previousModifiers,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &_hotKey
+        );
+        _hotKeyRegistered = restoreStatus == noErr;
+        WriteLog(@"Restored previous hotkey status=%d", (int)restoreStatus);
+    }
+    return NO;
+}
+
+- (void)configureShortcut:(id)sender {
+    (void)sender;
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"Keyboard Shortcut";
+    alert.informativeText = @"Press a shortcut using Control, Option, Shift, or Command. This changes the global helper shortcut; Teams still receives Shift-Command-M.";
+
+    NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 360, 74)];
+    NSTextField *recording = [NSTextField labelWithString:[self shortcutDisplayString]];
+    recording.frame = NSMakeRect(0, 25, 360, 36);
+    recording.alignment = NSTextAlignmentCenter;
+    recording.font = [NSFont monospacedSystemFontOfSize:24 weight:NSFontWeightSemibold];
+    [accessory addSubview:recording];
+
+    NSTextField *hint = [NSTextField labelWithString:@"Press the new key combination now"];
+    hint.frame = NSMakeRect(0, 2, 360, 18);
+    hint.alignment = NSTextAlignmentCenter;
+    hint.textColor = NSColor.secondaryLabelColor;
+    [accessory addSubview:hint];
+    alert.accessoryView = accessory;
+
+    [alert addButtonWithTitle:@"Save"];
+    [alert addButtonWithTitle:@"Cancel"];
+    [alert addButtonWithTitle:@"Restore Default"];
+
+    __block UInt32 candidateKeyCode = _hotKeyKeyCode;
+    __block UInt32 candidateModifiers = _hotKeyModifiers;
+    __block NSString *candidateLabel = _hotKeyLabel;
+    id monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+                                                       handler:^NSEvent *(NSEvent *event) {
+        if (event.isARepeat) {
+            return nil;
+        }
+        UInt32 modifiers = CarbonModifiersFromEvent(event.modifierFlags);
+        if (modifiers == 0) {
+            if (event.keyCode == kVK_Escape || event.keyCode == kVK_Return ||
+                event.keyCode == kVK_ANSI_KeypadEnter) {
+                return event;
+            }
+            NSBeep();
+            hint.stringValue = @"Include at least one modifier key";
+            return nil;
+        }
+
+        candidateKeyCode = event.keyCode;
+        candidateModifiers = modifiers;
+        candidateLabel = KeyLabelFromEvent(event);
+        recording.stringValue = HotKeyDisplayString(candidateModifiers, candidateLabel);
+        hint.stringValue = @"Ready to save";
+        return nil;
+    }];
+
+    NSModalResponse response = [alert runModal];
+    [NSEvent removeMonitor:monitor];
+
+    if (response == NSAlertSecondButtonReturn) {
+        return;
+    }
+    if (response == NSAlertThirdButtonReturn) {
+        candidateKeyCode = kDefaultHotKeyKeyCode;
+        candidateModifiers = kDefaultHotKeyModifiers;
+        candidateLabel = @"A";
+    }
+
+    NSString *candidateDisplay = HotKeyDisplayString(candidateModifiers, candidateLabel);
+    if (![self replaceHotKeyWithKeyCode:candidateKeyCode modifiers:candidateModifiers]) {
+        [self showShortcutConflictForDisplay:candidateDisplay];
+        [self showIdleStatus];
+        return;
+    }
+
+    _hotKeyKeyCode = candidateKeyCode;
+    _hotKeyModifiers = candidateModifiers;
+    _hotKeyLabel = candidateLabel;
+    SaveHotKeyPreference(_hotKeyKeyCode, _hotKeyModifiers, _hotKeyLabel);
+    [self updateShortcutMenu];
+    [self showIdleStatus];
+}
+
 - (void)openAccessibilitySettings:(id)sender {
     (void)sender;
     NSURL *url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
@@ -570,7 +835,7 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     [NSApp terminate:nil];
 }
 
-- (BOOL)registerGlobalHotKey {
+- (BOOL)installHotKeyHandler {
     EventTypeSpec eventType = {kEventClassKeyboard, kEventHotKeyPressed};
     OSStatus handlerStatus = InstallApplicationEventHandler(
         HandleHotKeyEvent,
@@ -584,38 +849,33 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
         return NO;
     }
 
-    EventHotKeyID hotKeyID = {'TMHM', 1};
-    OSStatus hotKeyStatus = RegisterEventHotKey(
-        kVK_ANSI_A,
-        cmdKey | controlKey | shiftKey,
-        hotKeyID,
-        GetApplicationEventTarget(),
-        0,
-        &_hotKey
-    );
-    if (hotKeyStatus != noErr) {
-        WriteLog(@"Could not register hotkey status=%d", (int)hotKeyStatus);
-        RemoveEventHandler(_eventHandler);
-        _eventHandler = NULL;
-        return NO;
-    }
     return YES;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     (void)notification;
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    NSString *savedLabel = nil;
+    LoadHotKeyPreference(&_hotKeyKeyCode, &_hotKeyModifiers, &savedLabel);
+    _hotKeyLabel = savedLabel;
 
-    _statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:30];
+    _statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:26];
     [self showReadyStatus];
 
     NSMenu *menu = [[NSMenu alloc] init];
-    NSMenuItem *toggleItem = [[NSMenuItem alloc] initWithTitle:@"Toggle Teams Mute (⌃⇧⌘A)"
-                                                        action:@selector(toggleFromMenu:)
-                                                 keyEquivalent:@""];
-    toggleItem.target = self;
-    [menu addItem:toggleItem];
+    _toggleMenuItem = [[NSMenuItem alloc] initWithTitle:@""
+                                                action:@selector(toggleFromMenu:)
+                                         keyEquivalent:@""];
+    _toggleMenuItem.target = self;
+    [self updateShortcutMenu];
+    [menu addItem:_toggleMenuItem];
     [menu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *shortcutItem = [[NSMenuItem alloc] initWithTitle:@"Keyboard Shortcut…"
+                                                          action:@selector(configureShortcut:)
+                                                   keyEquivalent:@""];
+    shortcutItem.target = self;
+    [menu addItem:shortcutItem];
 
     NSMenuItem *accessibilityItem = [[NSMenuItem alloc] initWithTitle:@"Open Accessibility Settings…"
                                                                action:@selector(openAccessibilitySettings:)
@@ -632,7 +892,8 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
 
     NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
     BOOL trusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
-    _hotKeyRegistered = [self registerGlobalHotKey];
+    BOOL handlerInstalled = [self installHotKeyHandler];
+    _hotKeyRegistered = handlerInstalled && [self replaceHotKeyWithKeyCode:_hotKeyKeyCode modifiers:_hotKeyModifiers];
     WriteLog(@"Listener started trusted=%@ hotkey_registered=%@",
              trusted ? @"yes" : @"no", _hotKeyRegistered ? @"yes" : @"no");
     [self showIdleStatus];

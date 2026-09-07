@@ -4,7 +4,7 @@
   <img src="assets/app-icon.png" alt="Teams Mute Helper icon" width="220">
 </p>
 
-Toggle mute in Microsoft Teams from any macOS app with **Control-Shift-Command-A**.
+Toggle mute in Microsoft Teams from any macOS app. The default shortcut is **Control-Shift-Command-A**, and you can change it from the menu bar.
 
 Teams Mute Helper is a tiny native menu bar app compiled locally from the included Objective-C source. It owns both the global hotkey and Accessibility permission, so the app you are working in never becomes part of the permission chain.
 
@@ -48,10 +48,12 @@ Open **System Settings → Privacy & Security → Accessibility**, add `~/Applic
 
 Join a Teams meeting and press **Control-Shift-Command-A** from another app. Teams should toggle mute and return focus to the previous app.
 
+To use a different key combination, click the helper icon and choose **Keyboard Shortcut…**. Press the new combination and save it. The choice persists across app and Mac restarts. **Restore Default** returns to Control-Shift-Command-A.
+
 ## How it works
 
 1. A per-user login item starts Teams Mute Helper in listener mode.
-2. The helper registers **Control-Shift-Command-A** directly with macOS.
+2. The helper registers your saved shortcut directly with macOS, using **Control-Shift-Command-A** by default.
 3. When pressed, it finds the active Teams meeting and reads whether the microphone control says **Mute mic** or **Unmute mic**.
 4. It raises Teams, waits for the physical modifier keys to be released, and sends Teams' **Shift-Command-M** shortcut.
 5. It verifies that the mic state changed, restores the previous app, and returns to waiting.
@@ -65,6 +67,7 @@ Because the persistent helper receives the global hotkey itself, Shortcuts, Serv
 Click the microphone icon to:
 
 - toggle Teams mute without using the keyboard;
+- change or restore the global keyboard shortcut;
 - open Accessibility settings; or
 - quit the helper until the next login.
 
@@ -78,7 +81,7 @@ Check the menu bar for Teams Mute Helper. If its icon is missing, re-run:
 ./install-helper.sh
 ```
 
-Also remove **Control-Shift-Command-A** from any old Shortcuts shortcut or other hotkey utility. The helper shows a warning icon when macOS reports that the key combination is already registered.
+Also remove the chosen key combination from any old Shortcuts shortcut or other hotkey utility. The helper shows a warning icon when macOS reports that the combination is already registered. If a new shortcut conflicts, the helper rejects it and keeps the previous working shortcut.
 
 ### Accessibility is enabled, but the helper is not trusted
 
@@ -121,11 +124,11 @@ To test the running global-hotkey listener without pressing the physical keys, u
 ~/Applications/Teams\ Mute\ Helper.app/Contents/MacOS/TeamsMuteHelper --test-hotkey --verbose
 ```
 
-This deliberately toggles the current meeting once, verifies that Teams' mic state changed, and returns a non-zero status if it did not.
+This uses the currently configured global shortcut, deliberately toggles the current meeting once, verifies that Teams' mic state changed, and returns a non-zero status if it did not.
 
 ## Optional Shortcuts compatibility
 
-[`toggle-teams-mute.applescript`](toggle-teams-mute.applescript) remains available for existing setups and one-shot automation. It is not used by the menu bar listener. Do not assign it the same global key combination while the listener is running.
+[`toggle-teams-mute.applescript`](toggle-teams-mute.applescript) remains available for existing setups and one-shot automation. It is not used by the menu bar listener. Do not assign it the same global key combination as the helper while the listener is running.
 
 ## Uninstall
 
@@ -139,6 +142,7 @@ This removes the app and its login item. You can then remove its entry from Acce
 
 - [`install-helper.sh`](install-helper.sh): builds, signs, installs, starts, and removes the menu bar helper.
 - [`assets/app-icon.svg`](assets/app-icon.svg), [`assets/app-icon.png`](assets/app-icon.png), and [`assets/AppIcon.icns`](assets/AppIcon.icns): vector source, README image, and macOS bundle icon.
+- [`assets/menu-bar-icon.svg`](assets/menu-bar-icon.svg) and [`assets/menu-bar-icon.png`](assets/menu-bar-icon.png): monochrome source and bundled macOS template icon.
 - [`TeamsMuteHelper.m`](TeamsMuteHelper.m): owns the global hotkey, activates Teams, sends its mute shortcut, and verifies the state change.
 - [`TeamsMuteHelper-Info.plist`](TeamsMuteHelper-Info.plist): defines the native background app bundle.
 - [`toggle-teams-mute.applescript`](toggle-teams-mute.applescript): optional compatibility launcher for Shortcuts.
@@ -148,7 +152,6 @@ This removes the app and its login item. You can then remove its entry from Acce
 - Teams must be running with a meeting or call open.
 - Teams briefly receives focus because it does not expose a system-wide mute API on macOS.
 - The helper targets the current Teams desktop app. Classic Teams uses a different bundle ID.
-- The global hotkey is currently fixed to **Control-Shift-Command-A**.
 - A locally rebuilt app may need its Accessibility permission reset after an update.
 
 ## Privacy

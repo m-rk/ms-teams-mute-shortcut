@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Teams Mute Helper menu bar icon</title>
+  <desc id="description">A monochrome split keyboard key showing an unmuted and muted microphone.</desc>
+  <defs>
+    <clipPath id="face-clip">
+      <rect x="112" y="112" width="800" height="666" rx="172" ry="155"/>
+    </clipPath>
+    <mask id="depth-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="black"/>
+      <rect x="94" y="143" width="836" height="753" rx="184" ry="166" fill="white"/>
+      <rect x="112" y="112" width="800" height="666" rx="172" ry="155" fill="black"/>
+    </mask>
+    <mask id="right-mic-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="white"/>
+      <g fill="none" stroke="black" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="656" y="256" width="108" height="208" rx="54" stroke-width="36"/>
+        <path d="M614 384v24c0 72 42 116 96 116s96-44 96-116v-24" stroke-width="36"/>
+        <path d="M710 524v58M666 582h88" stroke-width="36"/>
+      </g>
+    </mask>
+    <mask id="slash-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="white"/>
+      <path d="M620 298l180 224" fill="none" stroke="black" stroke-width="36" stroke-linecap="round"/>
+    </mask>
+  </defs>
+
+  <rect x="94" y="143" width="836" height="753" rx="184" ry="166" fill="#000000" opacity="0.58" mask="url(#depth-mask)"/>
+  <g clip-path="url(#face-clip)" mask="url(#slash-cutout)">
+    <rect x="512" y="112" width="400" height="666" fill="#000000" mask="url(#right-mic-cutout)"/>
+    <path d="M620 298l180 224" fill="none" stroke="#000000" stroke-width="62" stroke-linecap="round"/>
+  </g>
+  <rect x="112" y="112" width="800" height="666" rx="172" ry="155" fill="none" stroke="#000000" stroke-width="28"/>
+
+  <g fill="#000000" stroke="#000000" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="260" y="256" width="108" height="222" rx="54" stroke="none"/>
+    <path d="M218 384v24c0 72 42 116 96 116s96-44 96-116v-24" fill="none" stroke-width="36"/>
+    <path d="M314 524v58M270 582h88" fill="none" stroke-width="36"/>
+  </g>
+</svg>

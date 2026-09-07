@@ -41,6 +41,7 @@ built_app="${temp_dir}/${app_name}"
 plist="${built_app}/Contents/Info.plist"
 built_executable="${built_app}/Contents/MacOS/${executable_name}"
 icon="${built_app}/Contents/Resources/AppIcon.icns"
+menu_bar_icon="${built_app}/Contents/Resources/MenuBarIcon.png"
 built_launch_agent="${temp_dir}/${bundle_id}.plist"
 
 if ! /usr/bin/xcrun --sdk macosx --find clang >/dev/null 2>&1; then
@@ -51,6 +52,7 @@ fi
 /bin/mkdir -p "${built_app}/Contents/MacOS" "${built_app}/Contents/Resources"
 /bin/cp "${repo_dir}/TeamsMuteHelper-Info.plist" "$plist"
 /bin/cp "${repo_dir}/assets/AppIcon.icns" "$icon"
+/bin/cp "${repo_dir}/assets/menu-bar-icon.png" "$menu_bar_icon"
 /usr/bin/xcrun --sdk macosx clang \
 	-fobjc-arc \
 	-O2 \
@@ -103,6 +105,6 @@ fi
 
 /usr/bin/printf 'Installed %s\n' "$app_path"
 if [ "$launch_listener" != "0" ]; then
-	/usr/bin/printf 'Started the Control-Shift-Command-A listener and added it to login items.\n'
+	/usr/bin/printf 'Started the global shortcut listener and added it to login items.\n'
 fi
 /usr/bin/printf 'Next: enable Teams Mute Helper in System Settings > Privacy & Security > Accessibility.\n'
