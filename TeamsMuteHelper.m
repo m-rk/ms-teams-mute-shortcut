@@ -42,6 +42,12 @@ static NSString *const kShortcutPromptShownPreference = @"ShortcutPromptShown";
     UInt32 _hotKeyModifiers;
     NSString *_hotKeyLabel;
     NSMenuItem *_toggleMenuItem;
+    BOOL _recordingShortcut;
+    UInt32 _recordingKeyCode;
+    UInt32 _recordingModifiers;
+    NSString *_recordingLabel;
+    NSTextField *_recordingField;
+    NSTextField *_recordingHint;
 }
 
 - (void)handleGlobalHotKey;
@@ -683,6 +689,14 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
 }
 
 - (void)handleGlobalHotKey {
+    if (_recordingShortcut) {
+        _recordingKeyCode = _hotKeyKeyCode;
+        _recordingModifiers = _hotKeyModifiers;
+        _recordingLabel = _hotKeyLabel;
+        _recordingField.stringValue = [self shortcutDisplayString];
+        _recordingHint.stringValue = @"Ready to save";
+        return;
+    }
     [self requestToggle];
 }
 
@@ -772,9 +786,12 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     [alert addButtonWithTitle:@"Cancel"];
     [alert addButtonWithTitle:@"Restore Default"];
 
-    __block UInt32 candidateKeyCode = _hotKeyKeyCode;
-    __block UInt32 candidateModifiers = _hotKeyModifiers;
-    __block NSString *candidateLabel = _hotKeyLabel;
+    _recordingShortcut = YES;
+    _recordingKeyCode = _hotKeyKeyCode;
+    _recordingModifiers = _hotKeyModifiers;
+    _recordingLabel = _hotKeyLabel;
+    _recordingField = recording;
+    _recordingHint = hint;
     id monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                                        handler:^NSEvent *(NSEvent *event) {
         if (event.isARepeat) {
@@ -791,16 +808,22 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
             return nil;
         }
 
-        candidateKeyCode = event.keyCode;
-        candidateModifiers = modifiers;
-        candidateLabel = KeyLabelFromEvent(event);
-        recording.stringValue = HotKeyDisplayString(candidateModifiers, candidateLabel);
+        self->_recordingKeyCode = event.keyCode;
+        self->_recordingModifiers = modifiers;
+        self->_recordingLabel = KeyLabelFromEvent(event);
+        recording.stringValue = HotKeyDisplayString(self->_recordingModifiers, self->_recordingLabel);
         hint.stringValue = @"Ready to save";
         return nil;
     }];
 
     NSModalResponse response = [alert runModal];
     [NSEvent removeMonitor:monitor];
+    UInt32 candidateKeyCode = _recordingKeyCode;
+    UInt32 candidateModifiers = _recordingModifiers;
+    NSString *candidateLabel = _recordingLabel;
+    _recordingShortcut = NO;
+    _recordingField = nil;
+    _recordingHint = nil;
 
     if (response == NSAlertSecondButtonReturn) {
         return;
