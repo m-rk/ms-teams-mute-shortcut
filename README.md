@@ -40,7 +40,9 @@ The installer:
 - starts its global hotkey listener; and
 - adds a per-user login item so the listener returns after signing in.
 
-You should see the Teams Mute Helper icon in the menu bar.
+On the first launch, the helper asks you to choose a global shortcut. **Control-Shift-Command-A** is preselected: click **Use Shortcut** to keep it, or press a different combination before continuing. You can change it later from the menu bar.
+
+You should then see the Teams Mute Helper icon in the menu bar.
 
 ### 3. Allow Accessibility access
 

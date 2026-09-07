@@ -30,6 +30,7 @@ static const UInt32 kDefaultHotKeyModifiers = cmdKey | controlKey | shiftKey;
 static NSString *const kHotKeyKeyCodePreference = @"HotKeyKeyCode";
 static NSString *const kHotKeyModifiersPreference = @"HotKeyModifiers";
 static NSString *const kHotKeyLabelPreference = @"HotKeyLabel";
+static NSString *const kShortcutPromptShownPreference = @"ShortcutPromptShown";
 
 @interface TeamsMuteHelperDelegate : NSObject <NSApplicationDelegate> {
     NSStatusItem *_statusItem;
@@ -49,7 +50,7 @@ static NSString *const kHotKeyLabelPreference = @"HotKeyLabel";
 
 static TeamsMuteHelperDelegate *gApplicationDelegate = nil;
 
-static void LoadHotKeyPreference(UInt32 *keyCode, UInt32 *modifiers, NSString **label) {
+static BOOL LoadHotKeyPreference(UInt32 *keyCode, UInt32 *modifiers, NSString **label) {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSNumber *savedKeyCode = [defaults objectForKey:kHotKeyKeyCodePreference];
     NSNumber *savedModifiers = [defaults objectForKey:kHotKeyModifiersPreference];
@@ -61,12 +62,13 @@ static void LoadHotKeyPreference(UInt32 *keyCode, UInt32 *modifiers, NSString **
         *keyCode = kDefaultHotKeyKeyCode;
         *modifiers = kDefaultHotKeyModifiers;
         *label = @"A";
-        return;
+        return NO;
     }
 
     *keyCode = savedKeyCode.unsignedIntValue;
     *modifiers = candidateModifiers & allowedModifiers;
     *label = savedLabel.length > 0 ? savedLabel : [NSString stringWithFormat:@"Key %u", *keyCode];
+    return YES;
 }
 
 static void SaveHotKeyPreference(UInt32 keyCode, UInt32 modifiers, NSString *label) {
@@ -745,12 +747,12 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     return NO;
 }
 
-- (void)configureShortcut:(id)sender {
-    (void)sender;
-
+- (void)presentShortcutRecorderForFirstLaunch:(BOOL)firstLaunch {
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"Keyboard Shortcut";
-    alert.informativeText = @"Press a shortcut using Control, Option, Shift, or Command. This changes the global helper shortcut; Teams still receives Shift-Command-M.";
+    alert.messageText = firstLaunch ? @"Choose Your Mute Shortcut" : @"Keyboard Shortcut";
+    alert.informativeText = firstLaunch
+        ? @"Control-Shift-Command-A is ready to use. Keep it, or press a different shortcut using Control, Option, Shift, or Command."
+        : @"Press a shortcut using Control, Option, Shift, or Command. This changes the global helper shortcut; Teams still receives Shift-Command-M.";
 
     NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 360, 74)];
     NSTextField *recording = [NSTextField labelWithString:[self shortcutDisplayString]];
@@ -766,7 +768,7 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     [accessory addSubview:hint];
     alert.accessoryView = accessory;
 
-    [alert addButtonWithTitle:@"Save"];
+    [alert addButtonWithTitle:firstLaunch ? @"Use Shortcut" : @"Save"];
     [alert addButtonWithTitle:@"Cancel"];
     [alert addButtonWithTitle:@"Restore Default"];
 
@@ -824,6 +826,11 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     [self showIdleStatus];
 }
 
+- (void)configureShortcut:(id)sender {
+    (void)sender;
+    [self presentShortcutRecorderForFirstLaunch:NO];
+}
+
 - (void)openAccessibilitySettings:(id)sender {
     (void)sender;
     NSURL *url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
@@ -856,8 +863,10 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     (void)notification;
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     NSString *savedLabel = nil;
-    LoadHotKeyPreference(&_hotKeyKeyCode, &_hotKeyModifiers, &savedLabel);
+    BOOL hasSavedShortcut = LoadHotKeyPreference(&_hotKeyKeyCode, &_hotKeyModifiers, &savedLabel);
     _hotKeyLabel = savedLabel;
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    BOOL shouldPromptForShortcut = !hasSavedShortcut && ![defaults boolForKey:kShortcutPromptShownPreference];
 
     _statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:26];
     [self showReadyStatus];
@@ -890,13 +899,31 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     [menu addItem:quitItem];
     _statusItem.menu = menu;
 
-    NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
-    BOOL trusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+    BOOL trusted = AXIsProcessTrusted();
+    if (!shouldPromptForShortcut) {
+        NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
+        trusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+    }
     BOOL handlerInstalled = [self installHotKeyHandler];
     _hotKeyRegistered = handlerInstalled && [self replaceHotKeyWithKeyCode:_hotKeyKeyCode modifiers:_hotKeyModifiers];
     WriteLog(@"Listener started trusted=%@ hotkey_registered=%@",
              trusted ? @"yes" : @"no", _hotKeyRegistered ? @"yes" : @"no");
     [self showIdleStatus];
+
+    if (shouldPromptForShortcut) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            [[NSRunningApplication currentApplication] activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+#pragma clang diagnostic pop
+            [self presentShortcutRecorderForFirstLaunch:YES];
+            [defaults setBool:YES forKey:kShortcutPromptShownPreference];
+
+            NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
+            AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+            [self showIdleStatus];
+        });
+    }
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
