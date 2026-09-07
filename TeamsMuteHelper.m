@@ -807,7 +807,9 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
 
 - (void)presentShortcutRecorderForFirstLaunch:(BOOL)firstLaunch {
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = firstLaunch ? @"Choose Your Mute Shortcut" : @"Keyboard Shortcut";
+    alert.messageText = firstLaunch
+        ? @"Choose Your Mute Shortcut"
+        : @"Toggle Teams Mute global keyboard shortcut";
     alert.informativeText = firstLaunch
         ? @"Control-Shift-Command-A is ready to use. Keep it, or click Record a Different Shortcut when you're ready."
         : @"Your current global shortcut is shown below. Click Record New Shortcut when you're ready to change it. Teams still receives Shift-Command-M.";
