@@ -4,7 +4,7 @@
   <img src="assets/app-icon.png" alt="Teams Mute Helper icon" width="220">
 </p>
 
-Toggle mute in Microsoft Teams from any macOS app. The default shortcut is **Control-Shift-Command-A**, and you can change it from the menu bar.
+Toggle mute in Microsoft Teams from any macOS app with a configurable global keyboard shortcut. The default is **Control-Shift-Command-A**.
 
 Teams Mute Helper is a tiny native menu bar app compiled locally from the included Objective-C source. It owns both the global hotkey and Accessibility permission, so the app you are working in never becomes part of the permission chain.
 
@@ -19,13 +19,7 @@ The helper launches at login, remains idle until the hotkey is pressed, and has 
 
 ## Set up
 
-### 1. Remove the old Shortcuts hotkey
-
-If you used an earlier version of this project, remove **Control-Shift-Command-A** from the `Toggle Teams Mute` shortcut in Shortcuts, or delete that shortcut. Leaving both enabled can create a hotkey conflict.
-
-Shortcuts is not required by the current version.
-
-### 2. Install the helper
+### 1. Install the helper
 
 Clone or download this repository, then run:
 
@@ -40,17 +34,29 @@ The installer:
 - starts its global hotkey listener; and
 - adds a per-user login item so the listener returns after signing in.
 
-On the first launch, the helper asks you to choose a global shortcut. **Control-Shift-Command-A** is preselected: click **Use Shortcut** to keep it. To choose another, click **Record a Different Shortcut**, then press the combination. You can change it later from the menu bar.
-
 You should then see the Teams Mute Helper icon in the menu bar.
+
+### 2. Choose the global shortcut
+
+On the first launch, **Control-Shift-Command-A** is preselected. Click **Use Shortcut** to keep it. To choose another, click **Record a Different Shortcut**, then press one combination.
+
+To change it later, click the helper icon and choose **Keyboard Shortcut…**. In the **Toggle Teams Mute global keyboard shortcut** dialog, nothing is recorded until you click **Record New Shortcut**. The recorder stops listening after one combination so further typing cannot replace it accidentally. Click **Save** to apply it, or **Restore Default** to return to Control-Shift-Command-A.
+
+The choice persists across app and Mac restarts.
 
 ### 3. Allow Accessibility access
 
 Open **System Settings → Privacy & Security → Accessibility**, add `~/Applications/Teams Mute Helper.app`, and enable it.
 
-Join a Teams meeting and press **Control-Shift-Command-A** from another app. Teams should toggle mute and return focus to the previous app.
+Accessibility is used only to locate the active Teams meeting, deliver Teams' own mute shortcut, verify the result, and restore your previous app.
 
-To use a different key combination, click the helper icon and choose **Keyboard Shortcut…**. Nothing is recorded until you click **Record New Shortcut**. Press one combination, then save it. The recorder stops listening after that one combination. The choice persists across app and Mac restarts. **Restore Default** returns to Control-Shift-Command-A.
+### 4. Try it
+
+Join a Teams meeting and press your global shortcut from another app. Teams should toggle mute and return focus to the previous app.
+
+### Upgrading from the old Shortcuts version
+
+Shortcuts is not required by the native helper. Remove the global key combination from the old `Toggle Teams Mute` shortcut—or delete that shortcut—so it does not conflict with the helper.
 
 ## How it works
 
@@ -60,7 +66,7 @@ To use a different key combination, click the helper icon and choose **Keyboard 
 4. It raises Teams, waits for the physical modifier keys to be released, and sends Teams' **Shift-Command-M** shortcut.
 5. It verifies that the mic state changed, restores the previous app, and returns to waiting.
 
-The helper tries a system HID event first. If Teams does not change state, it retries with process-targeted key delivery. Verification prevents a successful first attempt from being toggled a second time, and overlapping hotkey presses are ignored while a toggle is running.
+The helper tries a system HID event first. If Teams does not change state, it retries with process-targeted delivery and then macOS Accessibility keyboard delivery. It verifies the microphone state after each attempt, so a successful attempt is not toggled a second time. Overlapping hotkey presses are ignored while a toggle is running.
 
 Because the persistent helper receives the global hotkey itself, Shortcuts, Services, Finder, browsers, and editors do not execute the Accessibility automation.
 
