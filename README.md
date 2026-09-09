@@ -63,10 +63,10 @@ Shortcuts is not required by the native helper. Remove the global key combinatio
 1. A per-user login item starts Teams Mute Helper in listener mode.
 2. The helper registers your saved shortcut directly with macOS, using **Control-Shift-Command-A** by default.
 3. When pressed, it finds the active Teams meeting and reads whether the microphone control says **Mute mic** or **Unmute mic**.
-4. It raises Teams, waits for the physical modifier keys to be released, and sends Teams' **Shift-Command-M** shortcut.
-5. It verifies that the mic state changed, restores the previous app, and returns to waiting.
+4. When you release the shortcut's main key, it sends Teams' **Shift-Command-M** shortcut directly to the Teams process without waiting for the modifier keys or changing focus.
+5. It verifies the mic state as soon as it changes and returns to waiting.
 
-The helper tries a system HID event first. If Teams does not change state, it retries with process-targeted delivery and then macOS Accessibility keyboard delivery. It verifies the microphone state after each attempt, so a successful attempt is not toggled a second time. Overlapping hotkey presses are ignored while a toggle is running.
+If background delivery does not change the mic state, the helper retries with macOS Accessibility keyboard delivery. Only if both targeted methods fail does it wait for any held modifier keys, briefly bring Teams forward, and retry with system HID delivery before restoring the previous app. It verifies the microphone state after each attempt, so a successful attempt is not toggled a second time. Overlapping hotkey presses are ignored while a toggle is running.
 
 Because the persistent helper receives the global hotkey itself, Shortcuts, Services, Finder, browsers, and editors do not execute the Accessibility automation.
 
@@ -158,7 +158,7 @@ This removes the app and its login item. You can then remove its entry from Acce
 ## Limitations
 
 - Teams must be running with a meeting or call open.
-- Teams briefly receives focus because it does not expose a system-wide mute API on macOS.
+- Teams may briefly receive focus if both background delivery methods fail and the helper needs its compatibility fallback.
 - The helper targets the current Teams desktop app. Classic Teams uses a different bundle ID.
 - A locally rebuilt app may need its Accessibility permission reset after an update.
 

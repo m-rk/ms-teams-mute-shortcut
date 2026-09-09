@@ -348,12 +348,12 @@ static MicContext FindMicContext(NSRunningApplication *mainTeams) {
 }
 
 static BOOL WaitForTeamsFrontmost(pid_t teamsPID) {
-    for (NSInteger attempt = 0; attempt < 12; attempt++) {
+    for (NSInteger attempt = 0; attempt < 50; attempt++) {
         NSRunningApplication *frontmost = [[NSWorkspace sharedWorkspace] frontmostApplication];
         if (frontmost.processIdentifier == teamsPID) {
             return YES;
         }
-        usleep(50000);
+        usleep(10000);
     }
     return NO;
 }
@@ -361,12 +361,12 @@ static BOOL WaitForTeamsFrontmost(pid_t teamsPID) {
 static BOOL WaitForModifierRelease(void) {
     CGEventFlags modifiers = kCGEventFlagMaskCommand | kCGEventFlagMaskShift |
                              kCGEventFlagMaskControl | kCGEventFlagMaskAlternate;
-    for (NSInteger attempt = 0; attempt < 100; attempt++) {
+    for (NSInteger attempt = 0; attempt < 400; attempt++) {
         CGEventFlags flags = CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState);
         if ((flags & modifiers) == 0) {
             return YES;
         }
-        usleep(20000);
+        usleep(5000);
     }
     return NO;
 }
@@ -380,7 +380,7 @@ static void PostCGKey(DeliveryMode mode, pid_t teamsPID, CGKeyCode keyCode, BOOL
         CGEventPost(kCGHIDEventTap, event);
     }
     CFRelease(event);
-    usleep(15000);
+    usleep(1000);
 }
 
 static void SendCGShortcut(DeliveryMode mode, pid_t teamsPID) {
@@ -456,6 +456,25 @@ static NSString *DeliveryModeName(DeliveryMode mode) {
     }
 }
 
+static BOOL WaitForMicStateChange(NSRunningApplication *teams, MicState before, NSTimeInterval timeout) {
+    CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
+    do {
+        NSTimeInterval elapsed = CFAbsoluteTimeGetCurrent() - started;
+        usleep(elapsed < 0.10 ? 5000 : 20000);
+        MicContext after = FindMicContext(teams);
+        BOOL changed = before != MicStateUnknown && after.state != MicStateUnknown && after.state != before;
+        if (changed) {
+            WriteLog(@"Observed mic change before=%@ after=%@ latency_ms=%.0f",
+                     MicStateName(before), MicStateName(after.state),
+                     (CFAbsoluteTimeGetCurrent() - started) * 1000.0);
+            ReleaseMicContext(&after);
+            return YES;
+        }
+        ReleaseMicContext(&after);
+    } while (CFAbsoluteTimeGetCurrent() - started < timeout);
+    return NO;
+}
+
 static BOOL SendAndVerify(DeliveryMode mode, NSRunningApplication *teams, MicState before) {
     WriteLog(@"Sending shortcut mode=%@", DeliveryModeName(mode));
     if (mode == DeliveryModeAX) {
@@ -464,12 +483,9 @@ static BOOL SendAndVerify(DeliveryMode mode, NSRunningApplication *teams, MicSta
         SendCGShortcut(mode, teams.processIdentifier);
     }
 
-    usleep(650000);
-    MicContext after = FindMicContext(teams);
-    BOOL changed = before != MicStateUnknown && after.state != MicStateUnknown && after.state != before;
-    WriteLog(@"Verification mode=%@ before=%@ after=%@ changed=%@",
-             DeliveryModeName(mode), MicStateName(before), MicStateName(after.state), changed ? @"yes" : @"no");
-    ReleaseMicContext(&after);
+    BOOL changed = WaitForMicStateChange(teams, before, 0.65);
+    WriteLog(@"Verification mode=%@ before=%@ changed=%@",
+             DeliveryModeName(mode), MicStateName(before), changed ? @"yes" : @"no");
     return changed;
 }
 
@@ -495,27 +511,39 @@ static int RunHelper(BOOL diagnoseOnly) {
         return foundState ? 0 : 4;
     }
 
-    NSRunningApplication *previous = [[NSWorkspace sharedWorkspace] frontmostApplication];
-    if (before.meetingWindow != NULL) {
-        AXUIElementPerformAction(before.meetingWindow, kAXRaiseAction);
-        AXUIElementSetAttributeValue(before.meetingWindow, kAXMainAttribute, kCFBooleanTrue);
-        AXUIElementSetAttributeValue(before.meetingWindow, kAXFocusedAttribute, kCFBooleanTrue);
+    BOOL changed = NO;
+    BOOL unverified = before.state == MicStateUnknown;
+    if (before.state == MicStateUnknown) {
+        SendCGShortcut(DeliveryModePID, teams.processIdentifier);
+        WriteLog(@"Mic state was unavailable; sent one unverified process-targeted shortcut");
+    } else {
+        changed = SendAndVerify(DeliveryModePID, teams, before.state);
+        if (!changed) {
+            changed = SendAndVerify(DeliveryModeAX, teams, before.state);
+        }
     }
+
+    NSRunningApplication *previous = nil;
+    BOOL activatedTeams = NO;
+    if (!unverified && !changed) {
+        BOOL released = WaitForModifierRelease();
+        WriteLog(@"Fallback modifiers released=%@", released ? @"yes" : @"no");
+        previous = [[NSWorkspace sharedWorkspace] frontmostApplication];
+        if (before.meetingWindow != NULL) {
+            AXUIElementPerformAction(before.meetingWindow, kAXRaiseAction);
+            AXUIElementSetAttributeValue(before.meetingWindow, kAXMainAttribute, kCFBooleanTrue);
+            AXUIElementSetAttributeValue(before.meetingWindow, kAXFocusedAttribute, kCFBooleanTrue);
+        }
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    BOOL activationRequested = [teams activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
+        BOOL activationRequested = [teams activateWithOptions:(NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps)];
 #pragma clang diagnostic pop
-    BOOL frontmost = WaitForTeamsFrontmost(teams.processIdentifier);
-    BOOL released = WaitForModifierRelease();
-    WriteLog(@"Activation requested=%@ frontmost=%@ modifiers_released=%@",
-             activationRequested ? @"yes" : @"no", frontmost ? @"yes" : @"no", released ? @"yes" : @"no");
+        activatedTeams = YES;
+        BOOL frontmost = WaitForTeamsFrontmost(teams.processIdentifier);
+        WriteLog(@"Fallback activation requested=%@ frontmost=%@",
+                 activationRequested ? @"yes" : @"no", frontmost ? @"yes" : @"no");
 
-    BOOL changed = NO;
-    if (before.state == MicStateUnknown) {
-        SendCGShortcut(DeliveryModeHID, teams.processIdentifier);
-        WriteLog(@"Mic state was unavailable; sent one unverified HID shortcut");
-    } else {
         changed = SendAndVerify(DeliveryModeHID, teams, before.state);
         if (!changed) {
             changed = SendAndVerify(DeliveryModePID, teams, before.state);
@@ -525,16 +553,16 @@ static int RunHelper(BOOL diagnoseOnly) {
         }
     }
 
-    usleep(150000);
-    if (previous != nil && !previous.terminated && previous.processIdentifier != teams.processIdentifier) {
+    if (activatedTeams && previous != nil && !previous.terminated &&
+        previous.processIdentifier != teams.processIdentifier) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
         [previous activateWithOptions:NSApplicationActivateIgnoringOtherApps];
 #pragma clang diagnostic pop
     }
 
-    BOOL unverified = before.state == MicStateUnknown;
-    WriteLog(@"Finished changed=%@", changed ? @"yes" : @"no");
+    WriteLog(@"Finished changed=%@ focus_fallback=%@",
+             changed ? @"yes" : @"no", activatedTeams ? @"yes" : @"no");
     ReleaseMicContext(&before);
     return changed || unverified ? 0 : 5;
 }
@@ -566,13 +594,7 @@ static int TestGlobalHotKey(void) {
              HotKeyDisplayString(modifiers, label), MicStateName(before.state));
     PostGlobalHotKeyForTesting(keyCode, modifiers);
 
-    BOOL changed = NO;
-    for (NSInteger attempt = 0; attempt < 20 && !changed; attempt++) {
-        usleep(200000);
-        MicContext after = FindMicContext(teams);
-        changed = after.state != MicStateUnknown && after.state != before.state;
-        ReleaseMicContext(&after);
-    }
+    BOOL changed = WaitForMicStateChange(teams, before.state, 4.0);
 
     WriteLog(@"Global hotkey test changed=%@", changed ? @"yes" : @"no");
     ReleaseMicContext(&before);
@@ -935,7 +957,7 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
 }
 
 - (BOOL)installHotKeyHandler {
-    EventTypeSpec eventType = {kEventClassKeyboard, kEventHotKeyPressed};
+    EventTypeSpec eventType = {kEventClassKeyboard, kEventHotKeyReleased};
     OSStatus handlerStatus = InstallApplicationEventHandler(
         HandleHotKeyEvent,
         1,
@@ -949,6 +971,19 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     }
 
     return YES;
+}
+
+- (void)registerConfiguredHotKeyWithRetryDelay:(NSTimeInterval)retryDelay {
+    _hotKeyRegistered = [self replaceHotKeyWithKeyCode:_hotKeyKeyCode modifiers:_hotKeyModifiers];
+    [self showIdleStatus];
+    if (_hotKeyRegistered) {
+        return;
+    }
+
+    NSTimeInterval nextDelay = MIN(retryDelay * 2.0, 5.0);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(retryDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self registerConfiguredHotKeyWithRetryDelay:nextDelay];
+    });
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
@@ -998,7 +1033,10 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
         trusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
     }
     BOOL handlerInstalled = [self installHotKeyHandler];
-    _hotKeyRegistered = handlerInstalled && [self replaceHotKeyWithKeyCode:_hotKeyKeyCode modifiers:_hotKeyModifiers];
+    _hotKeyRegistered = NO;
+    if (handlerInstalled) {
+        [self registerConfiguredHotKeyWithRetryDelay:0.25];
+    }
     WriteLog(@"Listener started trusted=%@ hotkey_registered=%@",
              trusted ? @"yes" : @"no", _hotKeyRegistered ? @"yes" : @"no");
     [self showIdleStatus];
