@@ -23,8 +23,12 @@ The helper launches at login, remains idle until the hotkey is pressed, and has 
 #### Homebrew
 
 ```sh
-brew install --cask m-rk/tap/teams-mute-helper
+brew trust m-rk/tap
+brew tap m-rk/tap
+brew install --cask teams-mute-helper
 ```
+
+Older Homebrew versions that do not have `brew trust` can skip the first command.
 
 Or download the latest signed build from [GitHub Releases](https://github.com/m-rk/ms-teams-mute-shortcut/releases/latest), unzip it, and move **Teams Mute Helper.app** to your Applications folder.
 
