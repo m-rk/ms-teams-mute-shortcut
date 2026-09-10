@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <Carbon/Carbon.h>
+#import <ServiceManagement/ServiceManagement.h>
 #import <fcntl.h>
 #import <sys/file.h>
 #import <unistd.h>
@@ -42,6 +43,7 @@ static NSString *const kShortcutPromptShownPreference = @"ShortcutPromptShown";
     UInt32 _hotKeyModifiers;
     NSString *_hotKeyLabel;
     NSMenuItem *_toggleMenuItem;
+    NSMenuItem *_launchAtLoginMenuItem;
     BOOL _shortcutDialogOpen;
     BOOL _recordingShortcut;
     UInt32 _recordingKeyCode;
@@ -58,6 +60,48 @@ static NSString *const kShortcutPromptShownPreference = @"ShortcutPromptShown";
 @end
 
 static TeamsMuteHelperDelegate *gApplicationDelegate = nil;
+
+static BOOL IsInApplicationsFolder(void) {
+    NSString *bundlePath = NSBundle.mainBundle.bundlePath.stringByStandardizingPath;
+    NSArray<NSString *> *applicationFolders = NSSearchPathForDirectoriesInDomains(
+        NSApplicationDirectory,
+        NSUserDomainMask | NSLocalDomainMask,
+        YES
+    );
+    for (NSString *folder in applicationFolders) {
+        NSString *prefix = [folder.stringByStandardizingPath stringByAppendingString:@"/"];
+        if ([bundlePath hasPrefix:prefix]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static int SetLaunchAtLoginEnabled(BOOL enabled) {
+    if (enabled && !IsInApplicationsFolder()) {
+        fprintf(stderr, "Move Teams Mute Helper.app to an Applications folder first.\n");
+        return 6;
+    }
+
+    SMAppService *service = SMAppService.mainAppService;
+    if (enabled && (service.status == SMAppServiceStatusEnabled ||
+                    service.status == SMAppServiceStatusRequiresApproval)) {
+        return 0;
+    }
+    if (!enabled && service.status == SMAppServiceStatusNotRegistered) {
+        return 0;
+    }
+
+    NSError *error = nil;
+    BOOL changed = enabled
+        ? [service registerAndReturnError:&error]
+        : [service unregisterAndReturnError:&error];
+    if (!changed && error != nil) {
+        fprintf(stderr, "%s\n", error.localizedDescription.UTF8String);
+        return 7;
+    }
+    return 0;
+}
 
 static BOOL LoadHotKeyPreference(UInt32 *keyCode, UInt32 *modifiers, NSString **label) {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -938,8 +982,78 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     [self presentShortcutRecorderForFirstLaunch:NO];
 }
 
+- (void)syncLaunchAtLoginMenuItem {
+    SMAppServiceStatus status = SMAppService.mainAppService.status;
+    _launchAtLoginMenuItem.state = status == SMAppServiceStatusEnabled
+        ? NSControlStateValueOn
+        : status == SMAppServiceStatusRequiresApproval
+            ? NSControlStateValueMixed
+            : NSControlStateValueOff;
+    _launchAtLoginMenuItem.title = status == SMAppServiceStatusRequiresApproval
+        ? @"Launch at Login (Approval Required)…"
+        : @"Launch at Login";
+}
+
+- (void)registerLaunchAtLoginIfNeeded {
+    if (!IsInApplicationsFolder()) {
+        WriteLog(@"Skipped login item registration outside Applications folder");
+        [self syncLaunchAtLoginMenuItem];
+        return;
+    }
+
+    SMAppService *service = SMAppService.mainAppService;
+    if (service.status == SMAppServiceStatusEnabled ||
+        service.status == SMAppServiceStatusRequiresApproval) {
+        [self syncLaunchAtLoginMenuItem];
+        return;
+    }
+
+    NSError *error = nil;
+    BOOL registered = [service registerAndReturnError:&error];
+    WriteLog(@"Native login item registered=%@ error=%@",
+             registered ? @"yes" : @"no", error.localizedDescription ?: @"none");
+    [self syncLaunchAtLoginMenuItem];
+}
+
+- (void)toggleLaunchAtLogin:(id)sender {
+    (void)sender;
+    SMAppService *service = SMAppService.mainAppService;
+    if (service.status == SMAppServiceStatusRequiresApproval) {
+        [SMAppService openSystemSettingsLoginItems];
+        return;
+    }
+
+    if (service.status != SMAppServiceStatusEnabled && !IsInApplicationsFolder()) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.alertStyle = NSAlertStyleInformational;
+        alert.messageText = @"Move Teams Mute Helper to Applications";
+        alert.informativeText = @"Launch at Login can be enabled after the app is moved to your Applications folder.";
+        [alert addButtonWithTitle:@"OK"];
+        [alert runModal];
+        return;
+    }
+
+    NSError *error = nil;
+    BOOL changed = service.status == SMAppServiceStatusEnabled
+        ? [service unregisterAndReturnError:&error]
+        : [service registerAndReturnError:&error];
+    WriteLog(@"Native login item changed=%@ status=%ld error=%@",
+             changed ? @"yes" : @"no", (long)service.status,
+             error.localizedDescription ?: @"none");
+    [self syncLaunchAtLoginMenuItem];
+    if (!changed && error != nil) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.alertStyle = NSAlertStyleWarning;
+        alert.messageText = @"Couldn’t change Launch at Login";
+        alert.informativeText = error.localizedDescription;
+        [alert addButtonWithTitle:@"OK"];
+        [alert runModal];
+    }
+}
+
 - (void)menuWillOpen:(NSMenu *)menu {
     (void)menu;
+    [self syncLaunchAtLoginMenuItem];
     if (!_toggleInProgress) {
         [self showIdleStatus];
     }
@@ -1014,6 +1128,12 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     shortcutItem.target = self;
     [menu addItem:shortcutItem];
 
+    _launchAtLoginMenuItem = [[NSMenuItem alloc] initWithTitle:@"Launch at Login"
+                                                        action:@selector(toggleLaunchAtLogin:)
+                                                 keyEquivalent:@""];
+    _launchAtLoginMenuItem.target = self;
+    [menu addItem:_launchAtLoginMenuItem];
+
     NSMenuItem *accessibilityItem = [[NSMenuItem alloc] initWithTitle:@"Open Accessibility Settings…"
                                                                action:@selector(openAccessibilitySettings:)
                                                         keyEquivalent:@""];
@@ -1037,6 +1157,7 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     if (handlerInstalled) {
         [self registerConfiguredHotKeyWithRetryDelay:0.25];
     }
+    [self registerLaunchAtLoginIfNeeded];
     WriteLog(@"Listener started trusted=%@ hotkey_registered=%@",
              trusted ? @"yes" : @"no", _hotKeyRegistered ? @"yes" : @"no");
     [self showIdleStatus];
@@ -1076,6 +1197,8 @@ int main(int argc, const char *argv[]) {
         BOOL listen = NO;
         BOOL testHotKey = NO;
         BOOL toggleOnce = NO;
+        BOOL registerLoginItem = NO;
+        BOOL unregisterLoginItem = NO;
         for (int index = 1; index < argc; index++) {
             if (strcmp(argv[index], "--diagnose") == 0) {
                 diagnoseOnly = YES;
@@ -1087,6 +1210,10 @@ int main(int argc, const char *argv[]) {
                 testHotKey = YES;
             } else if (strcmp(argv[index], "--toggle") == 0) {
                 toggleOnce = YES;
+            } else if (strcmp(argv[index], "--register-login-item") == 0) {
+                registerLoginItem = YES;
+            } else if (strcmp(argv[index], "--unregister-login-item") == 0) {
+                unregisterLoginItem = YES;
             }
         }
         if (diagnoseOnly || verbose) {
@@ -1096,8 +1223,12 @@ int main(int argc, const char *argv[]) {
         if (testHotKey) {
             return TestGlobalHotKey();
         }
+        if (registerLoginItem || unregisterLoginItem) {
+            return SetLaunchAtLoginEnabled(registerLoginItem);
+        }
 
-        BOOL runListener = listen || (!diagnoseOnly && !verbose && !testHotKey && !toggleOnce);
+        BOOL runListener = listen || (!diagnoseOnly && !verbose && !testHotKey && !toggleOnce &&
+                                      !registerLoginItem && !unregisterLoginItem);
         if (runListener) {
             NSApplication *application = [NSApplication sharedApplication];
             TeamsMuteHelperDelegate *delegate = [[TeamsMuteHelperDelegate alloc] init];
