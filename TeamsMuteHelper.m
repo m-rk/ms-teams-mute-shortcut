@@ -25,34 +25,66 @@ typedef NS_ENUM(NSInteger, DeliveryMode) {
     DeliveryModeAX,
 };
 
+typedef NS_ENUM(NSInteger, ShortcutRecorderTarget) {
+    ShortcutRecorderTargetNone = 0,
+    ShortcutRecorderTargetGlobal,
+    ShortcutRecorderTargetTeams,
+};
+
 static BOOL gLoggingEnabled = NO;
 static const UInt32 kDefaultHotKeyKeyCode = kVK_ANSI_A;
 static const UInt32 kDefaultHotKeyModifiers = cmdKey | controlKey | shiftKey;
+static const UInt32 kDefaultTeamsShortcutKeyCode = kVK_ANSI_M;
+static const UInt32 kDefaultTeamsShortcutModifiers = cmdKey | shiftKey;
 static NSString *const kHotKeyKeyCodePreference = @"HotKeyKeyCode";
 static NSString *const kHotKeyModifiersPreference = @"HotKeyModifiers";
 static NSString *const kHotKeyLabelPreference = @"HotKeyLabel";
-static NSString *const kShortcutPromptShownPreference = @"ShortcutPromptShown";
+static NSString *const kTeamsShortcutKeyCodePreference = @"TeamsShortcutKeyCode";
+static NSString *const kTeamsShortcutModifiersPreference = @"TeamsShortcutModifiers";
+static NSString *const kTeamsShortcutLabelPreference = @"TeamsShortcutLabel";
+static NSString *const kOnboardingCompletedPreference = @"SettingsOnboardingCompleted";
+static NSString *const kAutomaticUpdateChecksPreference = @"AutomaticUpdateChecks";
+static NSString *const kLastUpdateCheckPreference = @"LastUpdateCheck";
+static const NSTimeInterval kAutomaticUpdateCheckInterval = 24.0 * 60.0 * 60.0;
 
-@interface TeamsMuteHelperDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate> {
+@interface TeamsMuteHelperDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate> {
     NSStatusItem *_statusItem;
     EventHotKeyRef _hotKey;
     EventHandlerRef _eventHandler;
     BOOL _hotKeyRegistered;
     BOOL _toggleInProgress;
+    BOOL _settingsHotKeyMainKeyDown;
     UInt32 _hotKeyKeyCode;
     UInt32 _hotKeyModifiers;
     NSString *_hotKeyLabel;
+    UInt32 _teamsShortcutKeyCode;
+    UInt32 _teamsShortcutModifiers;
+    NSString *_teamsShortcutLabel;
     NSMenuItem *_toggleMenuItem;
     NSMenuItem *_launchAtLoginMenuItem;
-    BOOL _shortcutDialogOpen;
-    BOOL _recordingShortcut;
-    UInt32 _recordingKeyCode;
-    UInt32 _recordingModifiers;
-    NSString *_recordingLabel;
-    NSTextField *_recordingField;
+    NSMenuItem *_updateMenuItem;
+    NSMenuItem *_accessibilityMenuItem;
+    NSWindow *_settingsWindow;
+    ShortcutRecorderTarget _recordingTarget;
+    BOOL _suppressRecordedShortcutRelease;
+    UInt32 _suppressRecordedShortcutKeyCode;
+    id _shortcutEventMonitor;
+    NSButton *_globalShortcutField;
+    NSButton *_teamsShortcutField;
     NSTextField *_recordingHint;
-    NSButton *_recordingButton;
-    NSButton *_shortcutSaveButton;
+    NSButton *_globalResetButton;
+    NSButton *_teamsResetButton;
+    NSButton *_testTeamsShortcutButton;
+    NSButton *_automaticUpdatesCheckbox;
+    NSTextField *_updateStatusLabel;
+    NSButton *_checkUpdatesButton;
+    NSButton *_launchAtLoginCheckbox;
+    NSView *_accessibilityStatusBadge;
+    NSTextField *_accessibilityStatusLabel;
+    NSButton *_accessibilitySettingsButton;
+    NSURL *_availableUpdateURL;
+    BOOL _updateCheckInProgress;
+    BOOL _automaticUpdateCheckScheduled;
 }
 
 - (void)handleGlobalHotKey;
@@ -75,6 +107,15 @@ static BOOL IsInApplicationsFolder(void) {
         }
     }
     return NO;
+}
+
+static NSString *CurrentVersion(void) {
+    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+    return version.length > 0 ? version : @"Unknown";
+}
+
+static BOOL VersionIsNewer(NSString *candidate, NSString *current) {
+    return [candidate compare:current options:NSNumericSearch] == NSOrderedDescending;
 }
 
 static int SetLaunchAtLoginEnabled(BOOL enabled) {
@@ -129,6 +170,33 @@ static void SaveHotKeyPreference(UInt32 keyCode, UInt32 modifiers, NSString *lab
     [defaults setInteger:keyCode forKey:kHotKeyKeyCodePreference];
     [defaults setInteger:modifiers forKey:kHotKeyModifiersPreference];
     [defaults setObject:label forKey:kHotKeyLabelPreference];
+}
+
+static void LoadTeamsShortcutPreference(UInt32 *keyCode, UInt32 *modifiers, NSString **label) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSNumber *savedKeyCode = [defaults objectForKey:kTeamsShortcutKeyCodePreference];
+    NSNumber *savedModifiers = [defaults objectForKey:kTeamsShortcutModifiersPreference];
+    NSString *savedLabel = [defaults stringForKey:kTeamsShortcutLabelPreference];
+    UInt32 allowedModifiers = cmdKey | controlKey | shiftKey | optionKey;
+
+    UInt32 candidateModifiers = savedModifiers != nil ? savedModifiers.unsignedIntValue : 0;
+    if (savedKeyCode == nil || (candidateModifiers & allowedModifiers) == 0) {
+        *keyCode = kDefaultTeamsShortcutKeyCode;
+        *modifiers = kDefaultTeamsShortcutModifiers;
+        *label = @"M";
+        return;
+    }
+
+    *keyCode = savedKeyCode.unsignedIntValue;
+    *modifiers = candidateModifiers & allowedModifiers;
+    *label = savedLabel.length > 0 ? savedLabel : [NSString stringWithFormat:@"Key %u", *keyCode];
+}
+
+static void SaveTeamsShortcutPreference(UInt32 keyCode, UInt32 modifiers, NSString *label) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setInteger:keyCode forKey:kTeamsShortcutKeyCodePreference];
+    [defaults setInteger:modifiers forKey:kTeamsShortcutModifiersPreference];
+    [defaults setObject:label forKey:kTeamsShortcutLabelPreference];
 }
 
 static NSString *HotKeyDisplayString(UInt32 modifiers, NSString *label) {
@@ -427,15 +495,43 @@ static void PostCGKey(DeliveryMode mode, pid_t teamsPID, CGKeyCode keyCode, BOOL
     usleep(1000);
 }
 
-static void SendCGShortcut(DeliveryMode mode, pid_t teamsPID) {
-    CGEventFlags command = kCGEventFlagMaskCommand;
-    CGEventFlags commandShift = kCGEventFlagMaskCommand | kCGEventFlagMaskShift;
-    PostCGKey(mode, teamsPID, kVK_Command, YES, command);
-    PostCGKey(mode, teamsPID, kVK_Shift, YES, commandShift);
-    PostCGKey(mode, teamsPID, kVK_ANSI_M, YES, commandShift);
-    PostCGKey(mode, teamsPID, kVK_ANSI_M, NO, commandShift);
-    PostCGKey(mode, teamsPID, kVK_Shift, NO, command);
-    PostCGKey(mode, teamsPID, kVK_Command, NO, 0);
+static void SendCGShortcut(DeliveryMode mode, pid_t teamsPID, UInt32 keyCode, UInt32 modifiers) {
+    CGEventFlags flags = 0;
+    if ((modifiers & cmdKey) != 0) {
+        flags |= kCGEventFlagMaskCommand;
+        PostCGKey(mode, teamsPID, kVK_Command, YES, flags);
+    }
+    if ((modifiers & controlKey) != 0) {
+        flags |= kCGEventFlagMaskControl;
+        PostCGKey(mode, teamsPID, kVK_Control, YES, flags);
+    }
+    if ((modifiers & optionKey) != 0) {
+        flags |= kCGEventFlagMaskAlternate;
+        PostCGKey(mode, teamsPID, kVK_Option, YES, flags);
+    }
+    if ((modifiers & shiftKey) != 0) {
+        flags |= kCGEventFlagMaskShift;
+        PostCGKey(mode, teamsPID, kVK_Shift, YES, flags);
+    }
+
+    PostCGKey(mode, teamsPID, (CGKeyCode)keyCode, YES, flags);
+    PostCGKey(mode, teamsPID, (CGKeyCode)keyCode, NO, flags);
+
+    if ((modifiers & shiftKey) != 0) {
+        flags &= ~kCGEventFlagMaskShift;
+        PostCGKey(mode, teamsPID, kVK_Shift, NO, flags);
+    }
+    if ((modifiers & optionKey) != 0) {
+        flags &= ~kCGEventFlagMaskAlternate;
+        PostCGKey(mode, teamsPID, kVK_Option, NO, flags);
+    }
+    if ((modifiers & controlKey) != 0) {
+        flags &= ~kCGEventFlagMaskControl;
+        PostCGKey(mode, teamsPID, kVK_Control, NO, flags);
+    }
+    if ((modifiers & cmdKey) != 0) {
+        PostCGKey(mode, teamsPID, kVK_Command, NO, 0);
+    }
 }
 
 static void PostGlobalHotKeyForTesting(UInt32 keyCode, UInt32 carbonModifiers) {
@@ -479,15 +575,35 @@ static void PostGlobalHotKeyForTesting(UInt32 keyCode, UInt32 carbonModifiers) {
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-static void SendAXShortcut(pid_t teamsPID) {
+static void SendAXShortcut(pid_t teamsPID, UInt32 keyCode, UInt32 modifiers) {
     AXUIElementRef application = AXUIElementCreateApplication(teamsPID);
-    AXUIElementPostKeyboardEvent(application, 0, kVK_Command, YES);
-    AXUIElementPostKeyboardEvent(application, 0, kVK_Shift, YES);
-    AXUIElementPostKeyboardEvent(application, 'm', kVK_ANSI_M, YES);
+    if ((modifiers & cmdKey) != 0) {
+        AXUIElementPostKeyboardEvent(application, 0, kVK_Command, YES);
+    }
+    if ((modifiers & controlKey) != 0) {
+        AXUIElementPostKeyboardEvent(application, 0, kVK_Control, YES);
+    }
+    if ((modifiers & optionKey) != 0) {
+        AXUIElementPostKeyboardEvent(application, 0, kVK_Option, YES);
+    }
+    if ((modifiers & shiftKey) != 0) {
+        AXUIElementPostKeyboardEvent(application, 0, kVK_Shift, YES);
+    }
+    AXUIElementPostKeyboardEvent(application, 0, (CGKeyCode)keyCode, YES);
     usleep(30000);
-    AXUIElementPostKeyboardEvent(application, 'm', kVK_ANSI_M, NO);
-    AXUIElementPostKeyboardEvent(application, 0, kVK_Shift, NO);
-    AXUIElementPostKeyboardEvent(application, 0, kVK_Command, NO);
+    AXUIElementPostKeyboardEvent(application, 0, (CGKeyCode)keyCode, NO);
+    if ((modifiers & shiftKey) != 0) {
+        AXUIElementPostKeyboardEvent(application, 0, kVK_Shift, NO);
+    }
+    if ((modifiers & optionKey) != 0) {
+        AXUIElementPostKeyboardEvent(application, 0, kVK_Option, NO);
+    }
+    if ((modifiers & controlKey) != 0) {
+        AXUIElementPostKeyboardEvent(application, 0, kVK_Control, NO);
+    }
+    if ((modifiers & cmdKey) != 0) {
+        AXUIElementPostKeyboardEvent(application, 0, kVK_Command, NO);
+    }
     CFRelease(application);
 }
 #pragma clang diagnostic pop
@@ -519,12 +635,16 @@ static BOOL WaitForMicStateChange(NSRunningApplication *teams, MicState before, 
     return NO;
 }
 
-static BOOL SendAndVerify(DeliveryMode mode, NSRunningApplication *teams, MicState before) {
+static BOOL SendAndVerify(DeliveryMode mode,
+                          NSRunningApplication *teams,
+                          MicState before,
+                          UInt32 keyCode,
+                          UInt32 modifiers) {
     WriteLog(@"Sending shortcut mode=%@", DeliveryModeName(mode));
     if (mode == DeliveryModeAX) {
-        SendAXShortcut(teams.processIdentifier);
+        SendAXShortcut(teams.processIdentifier, keyCode, modifiers);
     } else {
-        SendCGShortcut(mode, teams.processIdentifier);
+        SendCGShortcut(mode, teams.processIdentifier, keyCode, modifiers);
     }
 
     BOOL changed = WaitForMicStateChange(teams, before, 0.65);
@@ -533,7 +653,7 @@ static BOOL SendAndVerify(DeliveryMode mode, NSRunningApplication *teams, MicSta
     return changed;
 }
 
-static int RunHelper(BOOL diagnoseOnly) {
+static int RunHelper(BOOL diagnoseOnly, BOOL reportUnverified) {
     BOOL trusted = AXIsProcessTrusted();
     WriteLog(@"Start native helper trusted=%@ diagnose=%@", trusted ? @"yes" : @"no", diagnoseOnly ? @"yes" : @"no");
     if (!trusted) {
@@ -547,23 +667,45 @@ static int RunHelper(BOOL diagnoseOnly) {
         return 3;
     }
 
+    UInt32 teamsShortcutKeyCode = 0;
+    UInt32 teamsShortcutModifiers = 0;
+    NSString *teamsShortcutLabel = nil;
+    LoadTeamsShortcutPreference(&teamsShortcutKeyCode, &teamsShortcutModifiers, &teamsShortcutLabel);
+    WriteLog(@"Using Teams shortcut %@",
+             HotKeyDisplayString(teamsShortcutModifiers, teamsShortcutLabel));
+
     MicContext before = FindMicContext(teams);
+    if (!diagnoseOnly && reportUnverified && before.state == MicStateUnknown) {
+        ReleaseMicContext(&before);
+        usleep(50000);
+        before = FindMicContext(teams);
+    }
     if (diagnoseOnly) {
         BOOL foundState = before.state != MicStateUnknown;
         WriteLog(@"Diagnostic complete state=%@", MicStateName(before.state));
         ReleaseMicContext(&before);
         return foundState ? 0 : 4;
     }
-
     BOOL changed = NO;
     BOOL unverified = before.state == MicStateUnknown;
     if (before.state == MicStateUnknown) {
-        SendCGShortcut(DeliveryModePID, teams.processIdentifier);
+        SendCGShortcut(DeliveryModePID,
+                       teams.processIdentifier,
+                       teamsShortcutKeyCode,
+                       teamsShortcutModifiers);
         WriteLog(@"Mic state was unavailable; sent one unverified process-targeted shortcut");
     } else {
-        changed = SendAndVerify(DeliveryModePID, teams, before.state);
+        changed = SendAndVerify(DeliveryModePID,
+                                teams,
+                                before.state,
+                                teamsShortcutKeyCode,
+                                teamsShortcutModifiers);
         if (!changed) {
-            changed = SendAndVerify(DeliveryModeAX, teams, before.state);
+            changed = SendAndVerify(DeliveryModeAX,
+                                    teams,
+                                    before.state,
+                                    teamsShortcutKeyCode,
+                                    teamsShortcutModifiers);
         }
     }
 
@@ -588,12 +730,24 @@ static int RunHelper(BOOL diagnoseOnly) {
         WriteLog(@"Fallback activation requested=%@ frontmost=%@",
                  activationRequested ? @"yes" : @"no", frontmost ? @"yes" : @"no");
 
-        changed = SendAndVerify(DeliveryModeHID, teams, before.state);
+        changed = SendAndVerify(DeliveryModeHID,
+                                teams,
+                                before.state,
+                                teamsShortcutKeyCode,
+                                teamsShortcutModifiers);
         if (!changed) {
-            changed = SendAndVerify(DeliveryModePID, teams, before.state);
+            changed = SendAndVerify(DeliveryModePID,
+                                    teams,
+                                    before.state,
+                                    teamsShortcutKeyCode,
+                                    teamsShortcutModifiers);
         }
         if (!changed) {
-            changed = SendAndVerify(DeliveryModeAX, teams, before.state);
+            changed = SendAndVerify(DeliveryModeAX,
+                                    teams,
+                                    before.state,
+                                    teamsShortcutKeyCode,
+                                    teamsShortcutModifiers);
         }
     }
 
@@ -608,7 +762,13 @@ static int RunHelper(BOOL diagnoseOnly) {
     WriteLog(@"Finished changed=%@ focus_fallback=%@",
              changed ? @"yes" : @"no", activatedTeams ? @"yes" : @"no");
     ReleaseMicContext(&before);
-    return changed || unverified ? 0 : 5;
+    if (changed) {
+        return 0;
+    }
+    if (unverified) {
+        return reportUnverified ? 6 : 0;
+    }
+    return 5;
 }
 
 static int TestGlobalHotKey(void) {
@@ -645,7 +805,7 @@ static int TestGlobalHotKey(void) {
     return changed ? 0 : 5;
 }
 
-static int RunLockedHelper(BOOL diagnoseOnly) {
+static int RunLockedHelper(BOOL diagnoseOnly, BOOL reportUnverified) {
     int lockFile = open("/tmp/io.github.m-rk.ms-teams-mute-helper.lock", O_CREAT | O_RDWR, 0600);
     if (lockFile < 0 || flock(lockFile, LOCK_EX | LOCK_NB) != 0) {
         WriteLog(@"Another helper instance is already running");
@@ -655,7 +815,7 @@ static int RunLockedHelper(BOOL diagnoseOnly) {
         return 0;
     }
 
-    int result = RunHelper(diagnoseOnly);
+    int result = RunHelper(diagnoseOnly, reportUnverified);
     flock(lockFile, LOCK_UN);
     close(lockFile);
     return result;
@@ -667,6 +827,25 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     TeamsMuteHelperDelegate *delegate = (__bridge TeamsMuteHelperDelegate *)context;
     [delegate handleGlobalHotKey];
     return noErr;
+}
+
+static NSTextField *SettingsLabel(NSString *text, NSRect frame) {
+    NSTextField *label = [NSTextField labelWithString:text];
+    label.frame = frame;
+    return label;
+}
+
+static NSButton *SettingsButton(NSString *title, id target, SEL action, NSRect frame) {
+    NSButton *button = [NSButton buttonWithTitle:title target:target action:action];
+    button.frame = frame;
+    button.bezelStyle = NSBezelStyleRounded;
+    return button;
+}
+
+static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
+    NSButton *button = SettingsButton(@"", target, action, frame);
+    button.font = [NSFont monospacedSystemFontOfSize:17 weight:NSFontWeightSemibold];
+    return button;
 }
 
 @implementation TeamsMuteHelperDelegate
@@ -687,7 +866,8 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
 }
 
 - (void)showReadyStatus {
-    NSString *description = [NSString stringWithFormat:@"Teams Mute Helper — %@", [self shortcutDisplayString]];
+    NSString *description = [NSString stringWithFormat:@"Teams Mute Helper %@ — %@",
+                              CurrentVersion(), [self shortcutDisplayString]];
     NSString *imagePath = [[NSBundle mainBundle] pathForResource:@"MenuBarIcon" ofType:@"png"];
     NSImage *image = imagePath != nil ? [[NSImage alloc] initWithContentsOfFile:imagePath] : nil;
     if (image == nil) {
@@ -714,7 +894,7 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
 }
 
 - (void)showResult:(int)result {
-    if (result == 0) {
+    if (result == 0 || result == 6) {
         [self showIdleStatus];
         return;
     }
@@ -740,30 +920,65 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     });
 }
 
-- (void)requestToggle {
+- (void)requestToggleForSettingsTest:(BOOL)settingsTest {
     if (_toggleInProgress) {
         WriteLog(@"Ignored overlapping hotkey press");
         return;
     }
 
+    BOOL showSettingsFeedback = settingsTest || _settingsWindow.visible;
     _toggleInProgress = YES;
+    if (showSettingsFeedback) {
+        _recordingHint.stringValue = @"Testing in the current Teams meeting…";
+        _recordingHint.textColor = NSColor.secondaryLabelColor;
+        _testTeamsShortcutButton.enabled = NO;
+    }
     [self setStatusSymbol:@"mic.badge.plus" description:@"Toggling Teams mute…"];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        int result = RunLockedHelper(NO);
+        int result = RunLockedHelper(NO, showSettingsFeedback);
         dispatch_async(dispatch_get_main_queue(), ^{
             self->_toggleInProgress = NO;
             [self showResult:result];
+            if (showSettingsFeedback) {
+                NSString *message = @"The shortcut was sent, but the mic state did not change.";
+                NSColor *color = NSColor.systemRedColor;
+                if (result == 0) {
+                    message = @"Worked — the Teams mic state changed.";
+                    color = NSColor.systemGreenColor;
+                } else if (result == 2) {
+                    message = @"Accessibility access is required before this can be tested.";
+                } else if (result == 3) {
+                    message = @"Microsoft Teams is not running.";
+                } else if (result == 4) {
+                    message = @"No active Teams meeting was found.";
+                } else if (result == 6) {
+                    message = @"Shortcut sent — check Teams to confirm.";
+                    color = NSColor.secondaryLabelColor;
+                }
+                self->_recordingHint.stringValue = message;
+                self->_recordingHint.textColor = color;
+                self->_testTeamsShortcutButton.enabled = YES;
+            }
         });
     });
 }
 
+- (void)requestToggle {
+    [self requestToggleForSettingsTest:NO];
+}
+
 - (void)handleGlobalHotKey {
-    if (_shortcutDialogOpen) {
-        if (_recordingShortcut) {
-            [self completeShortcutRecordingWithKeyCode:_hotKeyKeyCode
-                                            modifiers:_hotKeyModifiers
-                                                label:_hotKeyLabel];
-        }
+    if (_suppressRecordedShortcutRelease) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC),
+                       dispatch_get_main_queue(), ^{
+            self->_suppressRecordedShortcutRelease = NO;
+        });
+        return;
+    }
+    if (_recordingTarget != ShortcutRecorderTargetNone) {
+        [self completeShortcutRecordingWithKeyCode:_hotKeyKeyCode
+                                         modifiers:_hotKeyModifiers
+                                             label:_hotKeyLabel];
         return;
     }
     [self requestToggle];
@@ -772,6 +987,11 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
 - (void)toggleFromMenu:(id)sender {
     (void)sender;
     [self requestToggle];
+}
+
+- (void)testTeamsShortcut:(id)sender {
+    (void)sender;
+    [self requestToggleForSettingsTest:YES];
 }
 
 - (void)showShortcutConflictForDisplay:(NSString *)display {
@@ -830,100 +1050,174 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     return NO;
 }
 
-- (void)beginShortcutRecording:(id)sender {
-    (void)sender;
-    if (!_shortcutDialogOpen || _recordingShortcut) {
+- (NSString *)teamsShortcutDisplayString {
+    return HotKeyDisplayString(_teamsShortcutModifiers, _teamsShortcutLabel);
+}
+
+- (void)setShortcutControlsIdleWithHint:(NSString *)hint {
+    _recordingTarget = ShortcutRecorderTargetNone;
+    _globalShortcutField.title = [self shortcutDisplayString];
+    _teamsShortcutField.title = [self teamsShortcutDisplayString];
+    _globalShortcutField.enabled = YES;
+    _teamsShortcutField.enabled = YES;
+    _globalResetButton.enabled = YES;
+    _teamsResetButton.enabled = YES;
+    _testTeamsShortcutButton.enabled = !_toggleInProgress;
+    _automaticUpdatesCheckbox.enabled = YES;
+    _checkUpdatesButton.enabled = !_updateCheckInProgress;
+    _launchAtLoginCheckbox.enabled = YES;
+    _accessibilitySettingsButton.enabled = YES;
+    _recordingHint.stringValue = hint ?: @"Join a Teams meeting to test your shortcuts.";
+    _recordingHint.textColor = NSColor.secondaryLabelColor;
+}
+
+- (void)beginShortcutRecordingForTarget:(ShortcutRecorderTarget)target {
+    if (!_settingsWindow.visible || _recordingTarget != ShortcutRecorderTargetNone) {
         return;
     }
 
-    _recordingShortcut = YES;
-    _recordingField.stringValue = @"Press shortcut now…";
-    _recordingHint.stringValue = @"Use Control, Option, Shift, or Command";
-    _recordingButton.title = @"Listening…";
-    _recordingButton.enabled = NO;
-    _shortcutSaveButton.enabled = NO;
+    _settingsHotKeyMainKeyDown = NO;
+    _recordingTarget = target;
+    NSButton *field = target == ShortcutRecorderTargetGlobal
+        ? _globalShortcutField
+        : _teamsShortcutField;
+    field.title = @"Press shortcut…";
+    _globalShortcutField.enabled = NO;
+    _teamsShortcutField.enabled = NO;
+    _globalResetButton.enabled = NO;
+    _teamsResetButton.enabled = NO;
+    _testTeamsShortcutButton.enabled = NO;
+    _automaticUpdatesCheckbox.enabled = NO;
+    _checkUpdatesButton.enabled = NO;
+    _launchAtLoginCheckbox.enabled = NO;
+    _accessibilitySettingsButton.enabled = NO;
+    _recordingHint.stringValue = @"Use Control, Option, Shift, or Command. Press Escape to cancel.";
+}
+
+- (void)beginGlobalShortcutRecording:(id)sender {
+    (void)sender;
+    [self beginShortcutRecordingForTarget:ShortcutRecorderTargetGlobal];
+}
+
+- (void)beginTeamsShortcutRecording:(id)sender {
+    (void)sender;
+    [self beginShortcutRecordingForTarget:ShortcutRecorderTargetTeams];
 }
 
 - (void)cancelShortcutRecording {
-    _recordingShortcut = NO;
-    _recordingField.stringValue = HotKeyDisplayString(_recordingModifiers, _recordingLabel);
-    _recordingHint.stringValue = @"Recording cancelled";
-    _recordingButton.title = @"Record New Shortcut";
-    _recordingButton.enabled = YES;
-    _shortcutSaveButton.enabled = YES;
+    if (_recordingTarget == ShortcutRecorderTargetNone) {
+        return;
+    }
+    [self setShortcutControlsIdleWithHint:@"Recording cancelled."];
 }
 
 - (void)completeShortcutRecordingWithKeyCode:(UInt32)keyCode
-                                   modifiers:(UInt32)modifiers
-                                       label:(NSString *)label {
-    if (!_recordingShortcut) {
+                                    modifiers:(UInt32)modifiers
+                                        label:(NSString *)label {
+    ShortcutRecorderTarget target = _recordingTarget;
+    if (target == ShortcutRecorderTargetNone) {
         return;
     }
 
-    _recordingKeyCode = keyCode;
-    _recordingModifiers = modifiers;
-    _recordingLabel = label;
-    _recordingShortcut = NO;
-    _recordingField.stringValue = HotKeyDisplayString(modifiers, label);
-    _recordingHint.stringValue = @"Ready to save";
-    _recordingButton.title = @"Record Again";
-    _recordingButton.enabled = YES;
-    _shortcutSaveButton.enabled = YES;
+    _suppressRecordedShortcutRelease = YES;
+    _suppressRecordedShortcutKeyCode = keyCode;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC),
+                   dispatch_get_main_queue(), ^{
+        self->_suppressRecordedShortcutRelease = NO;
+    });
+
+    if (target == ShortcutRecorderTargetGlobal) {
+        NSString *display = HotKeyDisplayString(modifiers, label);
+        if (![self replaceHotKeyWithKeyCode:keyCode modifiers:modifiers]) {
+            [self setShortcutControlsIdleWithHint:@"The previous global shortcut is still active."];
+            [self showShortcutConflictForDisplay:display];
+            [self showIdleStatus];
+            return;
+        }
+        _hotKeyKeyCode = keyCode;
+        _hotKeyModifiers = modifiers;
+        _hotKeyLabel = label;
+        SaveHotKeyPreference(keyCode, modifiers, label);
+        [self updateShortcutMenu];
+        [self showIdleStatus];
+    } else {
+        _teamsShortcutKeyCode = keyCode;
+        _teamsShortcutModifiers = modifiers;
+        _teamsShortcutLabel = label;
+        SaveTeamsShortcutPreference(keyCode, modifiers, label);
+        _recordingHint.stringValue = @"Use Test to confirm this matches Teams.";
+        _recordingHint.textColor = NSColor.secondaryLabelColor;
+    }
+
+    [self setShortcutControlsIdleWithHint:@"Shortcut saved."];
 }
 
-- (void)presentShortcutRecorderForFirstLaunch:(BOOL)firstLaunch {
-    NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = firstLaunch
-        ? @"Choose Your Mute Shortcut"
-        : @"Toggle Teams Mute global keyboard shortcut";
-    alert.informativeText = firstLaunch
-        ? @"Control-Shift-Command-A is ready to use. Keep it, or click Record a Different Shortcut when you're ready."
-        : @"Your current global shortcut is shown below. Click Record New Shortcut when you're ready to change it. Teams still receives Shift-Command-M.";
+- (void)restoreDefaultGlobalShortcut:(id)sender {
+    (void)sender;
+    if (![self replaceHotKeyWithKeyCode:kDefaultHotKeyKeyCode modifiers:kDefaultHotKeyModifiers]) {
+        [self showShortcutConflictForDisplay:HotKeyDisplayString(kDefaultHotKeyModifiers, @"A")];
+        return;
+    }
+    _hotKeyKeyCode = kDefaultHotKeyKeyCode;
+    _hotKeyModifiers = kDefaultHotKeyModifiers;
+    _hotKeyLabel = @"A";
+    SaveHotKeyPreference(_hotKeyKeyCode, _hotKeyModifiers, _hotKeyLabel);
+    [self updateShortcutMenu];
+    [self setShortcutControlsIdleWithHint:@"Global shortcut restored to its default."];
+    [self showIdleStatus];
+}
 
-    NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 360, 116)];
-    NSTextField *recording = [NSTextField labelWithString:[self shortcutDisplayString]];
-    recording.frame = NSMakeRect(0, 67, 360, 36);
-    recording.alignment = NSTextAlignmentCenter;
-    recording.font = [NSFont monospacedSystemFontOfSize:24 weight:NSFontWeightSemibold];
-    [accessory addSubview:recording];
+- (void)restoreDefaultTeamsShortcut:(id)sender {
+    (void)sender;
+    _teamsShortcutKeyCode = kDefaultTeamsShortcutKeyCode;
+    _teamsShortcutModifiers = kDefaultTeamsShortcutModifiers;
+    _teamsShortcutLabel = @"M";
+    SaveTeamsShortcutPreference(_teamsShortcutKeyCode, _teamsShortcutModifiers, _teamsShortcutLabel);
+    _recordingHint.stringValue = @"Use Test to confirm this matches Teams.";
+    _recordingHint.textColor = NSColor.secondaryLabelColor;
+    [self setShortcutControlsIdleWithHint:@"Teams shortcut restored to its default."];
+}
 
-    NSButton *recordButton = [NSButton buttonWithTitle:firstLaunch
-                                                       ? @"Record a Different Shortcut"
-                                                       : @"Record New Shortcut"
-                                               target:self
-                                               action:@selector(beginShortcutRecording:)];
-    recordButton.frame = NSMakeRect(75, 31, 210, 30);
-    recordButton.bezelStyle = NSBezelStyleRounded;
-    [accessory addSubview:recordButton];
-
-    NSTextField *hint = [NSTextField labelWithString:@"Nothing is recorded until you click the button"];
-    hint.frame = NSMakeRect(0, 4, 360, 18);
-    hint.alignment = NSTextAlignmentCenter;
-    hint.textColor = NSColor.secondaryLabelColor;
-    [accessory addSubview:hint];
-    alert.accessoryView = accessory;
-
-    NSButton *saveButton = [alert addButtonWithTitle:firstLaunch ? @"Use Shortcut" : @"Save"];
-    [alert addButtonWithTitle:@"Cancel"];
-    [alert addButtonWithTitle:@"Restore Default"];
-
-    _shortcutDialogOpen = YES;
-    _recordingShortcut = NO;
-    _recordingKeyCode = _hotKeyKeyCode;
-    _recordingModifiers = _hotKeyModifiers;
-    _recordingLabel = _hotKeyLabel;
-    _recordingField = recording;
-    _recordingHint = hint;
-    _recordingButton = recordButton;
-    _shortcutSaveButton = saveButton;
-    id monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
-                                                       handler:^NSEvent *(NSEvent *event) {
-        if (!self->_recordingShortcut) {
+- (void)installShortcutEventMonitor {
+    if (_shortcutEventMonitor != nil) {
+        return;
+    }
+    NSEventMask shortcutMask = NSEventMaskKeyDown | NSEventMaskKeyUp;
+    _shortcutEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:shortcutMask
+                                                                   handler:^NSEvent *(NSEvent *event) {
+        if (self->_recordingTarget == ShortcutRecorderTargetNone) {
+            if (event.type == NSEventTypeKeyUp && self->_suppressRecordedShortcutRelease &&
+                event.keyCode == self->_suppressRecordedShortcutKeyCode) {
+                self->_settingsHotKeyMainKeyDown = NO;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC),
+                               dispatch_get_main_queue(), ^{
+                    self->_suppressRecordedShortcutRelease = NO;
+                });
+                return nil;
+            }
+            UInt32 modifiers = CarbonModifiersFromEvent(event.modifierFlags);
+            if (event.type == NSEventTypeKeyDown && event.keyCode == self->_hotKeyKeyCode &&
+                modifiers == self->_hotKeyModifiers) {
+                if (!event.isARepeat) {
+                    self->_settingsHotKeyMainKeyDown = YES;
+                }
+                return nil;
+            }
+            if (event.type == NSEventTypeKeyUp && event.keyCode == self->_hotKeyKeyCode &&
+                self->_settingsHotKeyMainKeyDown) {
+                self->_settingsHotKeyMainKeyDown = NO;
+                [self handleGlobalHotKey];
+                return nil;
+            }
             return event;
+        }
+        if (event.type != NSEventTypeKeyDown) {
+            return nil;
         }
         if (event.isARepeat) {
             return nil;
         }
+
         UInt32 modifiers = CarbonModifiersFromEvent(event.modifierFlags);
         if (modifiers == 0) {
             if (event.keyCode == kVK_Escape) {
@@ -931,7 +1225,7 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
                 return nil;
             }
             NSBeep();
-            hint.stringValue = @"Include at least one modifier key";
+            self->_recordingHint.stringValue = @"Include at least one modifier key.";
             return nil;
         }
 
@@ -940,58 +1234,370 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
                                              label:KeyLabelFromEvent(event)];
         return nil;
     }];
-
-    NSModalResponse response = [alert runModal];
-    [NSEvent removeMonitor:monitor];
-    UInt32 candidateKeyCode = _recordingKeyCode;
-    UInt32 candidateModifiers = _recordingModifiers;
-    NSString *candidateLabel = _recordingLabel;
-    _shortcutDialogOpen = NO;
-    _recordingShortcut = NO;
-    _recordingField = nil;
-    _recordingHint = nil;
-    _recordingButton = nil;
-    _shortcutSaveButton = nil;
-
-    if (response == NSAlertSecondButtonReturn) {
-        return;
-    }
-    if (response == NSAlertThirdButtonReturn) {
-        candidateKeyCode = kDefaultHotKeyKeyCode;
-        candidateModifiers = kDefaultHotKeyModifiers;
-        candidateLabel = @"A";
-    }
-
-    NSString *candidateDisplay = HotKeyDisplayString(candidateModifiers, candidateLabel);
-    if (![self replaceHotKeyWithKeyCode:candidateKeyCode modifiers:candidateModifiers]) {
-        [self showShortcutConflictForDisplay:candidateDisplay];
-        [self showIdleStatus];
-        return;
-    }
-
-    _hotKeyKeyCode = candidateKeyCode;
-    _hotKeyModifiers = candidateModifiers;
-    _hotKeyLabel = candidateLabel;
-    SaveHotKeyPreference(_hotKeyKeyCode, _hotKeyModifiers, _hotKeyLabel);
-    [self updateShortcutMenu];
-    [self showIdleStatus];
 }
 
-- (void)configureShortcut:(id)sender {
+- (void)refreshUpdateControls {
+    if (_checkUpdatesButton == nil) {
+        return;
+    }
+    if (_updateCheckInProgress) {
+        _updateStatusLabel.stringValue = @"Checking GitHub for the latest release…";
+        _checkUpdatesButton.title = @"Checking…";
+        _checkUpdatesButton.enabled = NO;
+        return;
+    }
+
+    _checkUpdatesButton.enabled = YES;
+    if (_availableUpdateURL != nil) {
+        _checkUpdatesButton.title = @"View Update…";
+        return;
+    }
+
+    _checkUpdatesButton.title = @"Check for Updates…";
+    NSDate *lastCheck = [[NSUserDefaults standardUserDefaults] objectForKey:kLastUpdateCheckPreference];
+    if (lastCheck != nil) {
+        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+        formatter.dateStyle = NSDateFormatterMediumStyle;
+        formatter.timeStyle = NSDateFormatterShortStyle;
+        _updateStatusLabel.stringValue = [NSString stringWithFormat:@"Last checked %@.",
+                                          [formatter stringFromDate:lastCheck]];
+    } else {
+        _updateStatusLabel.stringValue = @"Updates have not been checked yet.";
+    }
+}
+
+- (void)refreshSettingsStatus {
+    if (_settingsWindow == nil) {
+        return;
+    }
+    [self setShortcutControlsIdleWithHint:nil];
+    [self syncLaunchAtLoginMenuItem];
+    BOOL trusted = AXIsProcessTrusted();
+    _accessibilityStatusLabel.stringValue = trusted
+        ? @"Accessibility granted"
+        : @"Accessibility required";
+    _accessibilityStatusLabel.textColor = NSColor.labelColor;
+    NSColor *badgeColor = trusted
+        ? [NSColor.systemGreenColor colorWithAlphaComponent:0.20]
+        : [NSColor.systemOrangeColor colorWithAlphaComponent:0.22];
+    _accessibilityStatusBadge.layer.backgroundColor = badgeColor.CGColor;
+    [self refreshUpdateControls];
+}
+
+- (void)buildSettingsWindow {
+    NSRect frame = NSMakeRect(0, 0, 580, 560);
+    NSPanel *settingsPanel = [[NSPanel alloc]
+        initWithContentRect:frame
+                  styleMask:(NSWindowStyleMaskTitled |
+                             NSWindowStyleMaskClosable |
+                             NSWindowStyleMaskNonactivatingPanel)
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    settingsPanel.floatingPanel = YES;
+    settingsPanel.hidesOnDeactivate = NO;
+    settingsPanel.becomesKeyOnlyIfNeeded = NO;
+    _settingsWindow = settingsPanel;
+    _settingsWindow.releasedWhenClosed = NO;
+    _settingsWindow.delegate = self;
+    [_settingsWindow standardWindowButton:NSWindowMiniaturizeButton].hidden = YES;
+    [_settingsWindow standardWindowButton:NSWindowZoomButton].hidden = YES;
+
+    NSView *content = _settingsWindow.contentView;
+    NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(26, 456, 72, 72)];
+    icon.image = NSApp.applicationIconImage;
+    icon.imageScaling = NSImageScaleProportionallyUpOrDown;
+    [content addSubview:icon];
+
+    NSTextField *title = SettingsLabel(@"Teams Mute Helper", NSMakeRect(116, 497, 430, 32));
+    title.font = [NSFont systemFontOfSize:24 weight:NSFontWeightSemibold];
+    [content addSubview:title];
+
+    NSTextField *version = SettingsLabel([NSString stringWithFormat:@"Version %@", CurrentVersion()],
+                                         NSMakeRect(117, 471, 420, 22));
+    version.textColor = NSColor.secondaryLabelColor;
+    [content addSubview:version];
+
+    NSTextField *summary = SettingsLabel(@"Mute or unmute Microsoft Teams from anywhere with one global shortcut.",
+                                         NSMakeRect(116, 432, 430, 34));
+    summary.textColor = NSColor.secondaryLabelColor;
+    summary.maximumNumberOfLines = 2;
+    summary.usesSingleLineMode = NO;
+    summary.lineBreakMode = NSLineBreakByWordWrapping;
+    [content addSubview:summary];
+
+    NSTextField *shortcutsTitle = SettingsLabel(@"Shortcuts", NSMakeRect(30, 397, 500, 22));
+    shortcutsTitle.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+    [content addSubview:shortcutsTitle];
+    NSBox *shortcuts = [[NSBox alloc] initWithFrame:NSMakeRect(20, 253, 540, 136)];
+    shortcuts.titlePosition = NSNoTitle;
+    [content addSubview:shortcuts];
+    [shortcuts addSubview:SettingsLabel(@"Global shortcut", NSMakeRect(20, 88, 120, 24))];
+    _globalShortcutField = ShortcutButton(self,
+                                          @selector(beginGlobalShortcutRecording:),
+                                          NSMakeRect(150, 84, 190, 32));
+    [shortcuts addSubview:_globalShortcutField];
+    _globalResetButton = SettingsButton(@"Reset", self,
+                                         @selector(restoreDefaultGlobalShortcut:),
+                                         NSMakeRect(350, 84, 72, 32));
+    [shortcuts addSubview:_globalResetButton];
+
+    [shortcuts addSubview:SettingsLabel(@"Teams shortcut", NSMakeRect(20, 47, 120, 24))];
+    _teamsShortcutField = ShortcutButton(self,
+                                         @selector(beginTeamsShortcutRecording:),
+                                         NSMakeRect(150, 43, 190, 32));
+    [shortcuts addSubview:_teamsShortcutField];
+    _teamsResetButton = SettingsButton(@"Reset", self,
+                                        @selector(restoreDefaultTeamsShortcut:),
+                                        NSMakeRect(350, 43, 72, 32));
+    [shortcuts addSubview:_teamsResetButton];
+    _testTeamsShortcutButton = SettingsButton(@"Test", self,
+                                               @selector(testTeamsShortcut:),
+                                               NSMakeRect(432, 43, 72, 32));
+    [shortcuts addSubview:_testTeamsShortcutButton];
+
+    _recordingHint = SettingsLabel(@"", NSMakeRect(20, 12, 500, 20));
+    _recordingHint.textColor = NSColor.secondaryLabelColor;
+    [shortcuts addSubview:_recordingHint];
+
+    NSTextField *updatesTitle = SettingsLabel(@"Updates", NSMakeRect(30, 219, 500, 22));
+    updatesTitle.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+    [content addSubview:updatesTitle];
+    NSBox *updates = [[NSBox alloc] initWithFrame:NSMakeRect(20, 116, 540, 95)];
+    updates.titlePosition = NSNoTitle;
+    [content addSubview:updates];
+    _automaticUpdatesCheckbox = [NSButton checkboxWithTitle:@"Check automatically once a day"
+                                                     target:self
+                                                     action:@selector(automaticUpdateSettingChanged:)];
+    _automaticUpdatesCheckbox.frame = NSMakeRect(20, 48, 300, 24);
+    [updates addSubview:_automaticUpdatesCheckbox];
+    _checkUpdatesButton = SettingsButton(@"Check for Updates…", self,
+                                          @selector(checkForUpdates:),
+                                          NSMakeRect(350, 43, 170, 32));
+    [updates addSubview:_checkUpdatesButton];
+    _updateStatusLabel = SettingsLabel(@"", NSMakeRect(20, 14, 500, 22));
+    _updateStatusLabel.textColor = NSColor.secondaryLabelColor;
+    [updates addSubview:_updateStatusLabel];
+
+    NSTextField *startupTitle = SettingsLabel(@"Startup and Permissions", NSMakeRect(30, 83, 500, 22));
+    startupTitle.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+    [content addSubview:startupTitle];
+    NSBox *startup = [[NSBox alloc] initWithFrame:NSMakeRect(20, 14, 540, 61)];
+    startup.titlePosition = NSNoTitle;
+    [content addSubview:startup];
+    _launchAtLoginCheckbox = [NSButton checkboxWithTitle:@"Launch at Login"
+                                                  target:self
+                                                  action:@selector(toggleLaunchAtLogin:)];
+    _launchAtLoginCheckbox.frame = NSMakeRect(20, 19, 140, 24);
+    [startup addSubview:_launchAtLoginCheckbox];
+    _accessibilityStatusBadge = [[NSView alloc] initWithFrame:NSMakeRect(170, 18, 190, 24)];
+    _accessibilityStatusBadge.wantsLayer = YES;
+    _accessibilityStatusBadge.layer.cornerRadius = 6.0;
+    [startup addSubview:_accessibilityStatusBadge];
+    _accessibilityStatusLabel = SettingsLabel(@"", NSZeroRect);
+    _accessibilityStatusLabel.alignment = NSTextAlignmentCenter;
+    _accessibilityStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    [_accessibilityStatusBadge addSubview:_accessibilityStatusLabel];
+    [NSLayoutConstraint activateConstraints:@[
+        [_accessibilityStatusLabel.centerXAnchor constraintEqualToAnchor:_accessibilityStatusBadge.centerXAnchor],
+        [_accessibilityStatusLabel.centerYAnchor constraintEqualToAnchor:_accessibilityStatusBadge.centerYAnchor],
+        [_accessibilityStatusLabel.leadingAnchor constraintGreaterThanOrEqualToAnchor:_accessibilityStatusBadge.leadingAnchor
+                                                                             constant:8.0],
+        [_accessibilityStatusLabel.trailingAnchor constraintLessThanOrEqualToAnchor:_accessibilityStatusBadge.trailingAnchor
+                                                                              constant:-8.0],
+    ]];
+    _accessibilitySettingsButton = SettingsButton(@"Open Settings…", self,
+                                                   @selector(openAccessibilitySettings:),
+                                                   NSMakeRect(370, 14, 150, 32));
+    [startup addSubview:_accessibilitySettingsButton];
+}
+
+- (void)showSettingsWindowForOnboarding:(BOOL)onboarding {
+    if (_settingsWindow == nil) {
+        [self buildSettingsWindow];
+    }
+    _settingsWindow.title = onboarding ? @"Welcome to Teams Mute Helper" : @"Teams Mute Helper Settings";
+
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSNumber *automaticSetting = [defaults objectForKey:kAutomaticUpdateChecksPreference];
+    if (automaticSetting == nil) {
+        [defaults setBool:YES forKey:kAutomaticUpdateChecksPreference];
+        automaticSetting = @YES;
+    }
+    if (onboarding) {
+        [defaults setBool:YES forKey:kOnboardingCompletedPreference];
+    }
+    _automaticUpdatesCheckbox.state = automaticSetting.boolValue
+        ? NSControlStateValueOn
+        : NSControlStateValueOff;
+    [self refreshSettingsStatus];
+    [self installShortcutEventMonitor];
+
+    [_settingsWindow center];
+    [_settingsWindow orderFrontRegardless];
+    [self scheduleAutomaticUpdateCheck];
+}
+
+- (void)showSettings:(id)sender {
     (void)sender;
-    [self presentShortcutRecorderForFirstLaunch:NO];
+    [self showSettingsWindowForOnboarding:NO];
+}
+
+- (void)automaticUpdateSettingChanged:(id)sender {
+    (void)sender;
+    BOOL automatic = _automaticUpdatesCheckbox.state == NSControlStateValueOn;
+    [[NSUserDefaults standardUserDefaults] setBool:automatic
+                                            forKey:kAutomaticUpdateChecksPreference];
+    if (automatic) {
+        [self scheduleAutomaticUpdateCheck];
+    }
+}
+
+- (void)checkForUpdates:(id)sender {
+    (void)sender;
+    if (_availableUpdateURL != nil) {
+        [[NSWorkspace sharedWorkspace] openURL:_availableUpdateURL];
+        return;
+    }
+    [self performUpdateCheckUserInitiated:YES];
+}
+
+- (void)checkForUpdatesFromMenu:(id)sender {
+    (void)sender;
+    if (_availableUpdateURL != nil) {
+        [[NSWorkspace sharedWorkspace] openURL:_availableUpdateURL];
+        return;
+    }
+    [self showSettingsWindowForOnboarding:NO];
+    [self performUpdateCheckUserInitiated:YES];
+}
+
+- (void)performUpdateCheckUserInitiated:(BOOL)userInitiated {
+    (void)userInitiated;
+    if (_updateCheckInProgress) {
+        return;
+    }
+    _updateCheckInProgress = YES;
+    [self refreshUpdateControls];
+
+    NSURL *url = [NSURL URLWithString:@"https://api.github.com/repos/m-rk/ms-teams-mute-shortcut/releases/latest"];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+    [request setValue:@"application/vnd.github+json" forHTTPHeaderField:@"Accept"];
+    [request setValue:@"Teams-Mute-Helper" forHTTPHeaderField:@"User-Agent"];
+    request.timeoutInterval = 15.0;
+
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession]
+        dataTaskWithRequest:request
+          completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSString *candidateVersion = nil;
+        NSURL *releaseURL = nil;
+        NSString *failure = nil;
+        NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+        if (error != nil) {
+            failure = error.localizedDescription;
+        } else if (![http isKindOfClass:NSHTTPURLResponse.class] || http.statusCode != 200) {
+            failure = @"GitHub did not return a release.";
+        } else {
+            NSError *jsonError = nil;
+            NSDictionary *release = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
+            if (![release isKindOfClass:NSDictionary.class] || jsonError != nil) {
+                failure = @"The release response could not be read.";
+            } else {
+                NSString *tag = release[@"tag_name"];
+                NSString *page = release[@"html_url"];
+                if ([tag hasPrefix:@"v"] || [tag hasPrefix:@"V"]) {
+                    tag = [tag substringFromIndex:1];
+                }
+                if (tag.length == 0 || page.length == 0) {
+                    failure = @"The latest release did not include version information.";
+                } else {
+                    candidateVersion = tag;
+                    releaseURL = [NSURL URLWithString:page];
+                }
+            }
+        }
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_updateCheckInProgress = NO;
+            [[NSUserDefaults standardUserDefaults] setObject:[NSDate date]
+                                                       forKey:kLastUpdateCheckPreference];
+            if (failure != nil) {
+                self->_updateStatusLabel.stringValue = [NSString stringWithFormat:@"Couldn’t check for updates: %@", failure];
+                self->_updateStatusLabel.textColor = NSColor.systemRedColor;
+            } else if (VersionIsNewer(candidateVersion, CurrentVersion())) {
+                self->_availableUpdateURL = releaseURL;
+                self->_updateStatusLabel.stringValue = [NSString stringWithFormat:@"Version %@ is available.", candidateVersion];
+                self->_updateStatusLabel.textColor = NSColor.systemBlueColor;
+                self->_updateMenuItem.title = [NSString stringWithFormat:@"Update Available: %@…", candidateVersion];
+            } else {
+                self->_availableUpdateURL = nil;
+                self->_updateStatusLabel.stringValue = [NSString stringWithFormat:@"Teams Mute Helper %@ is up to date.", CurrentVersion()];
+                self->_updateStatusLabel.textColor = NSColor.secondaryLabelColor;
+                self->_updateMenuItem.title = @"Check for Updates…";
+            }
+            self->_checkUpdatesButton.enabled = YES;
+            self->_checkUpdatesButton.title = self->_availableUpdateURL != nil
+                ? @"View Update…"
+                : @"Check for Updates…";
+            [self scheduleAutomaticUpdateCheck];
+        });
+    }];
+    [task resume];
+}
+
+- (void)scheduleAutomaticUpdateCheck {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    if (_automaticUpdateCheckScheduled ||
+        ![defaults boolForKey:kOnboardingCompletedPreference] ||
+        ![defaults boolForKey:kAutomaticUpdateChecksPreference]) {
+        return;
+    }
+
+    NSDate *lastCheck = [defaults objectForKey:kLastUpdateCheckPreference];
+    NSTimeInterval elapsed = lastCheck == nil ? kAutomaticUpdateCheckInterval : -lastCheck.timeIntervalSinceNow;
+    NSTimeInterval delay = lastCheck == nil ? 2.0 : MAX(2.0, kAutomaticUpdateCheckInterval - elapsed);
+    _automaticUpdateCheckScheduled = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        self->_automaticUpdateCheckScheduled = NO;
+        NSUserDefaults *currentDefaults = [NSUserDefaults standardUserDefaults];
+        if ([currentDefaults boolForKey:kAutomaticUpdateChecksPreference]) {
+            [self performUpdateCheckUserInitiated:NO];
+        }
+    });
+}
+
+- (void)windowWillClose:(NSNotification *)notification {
+    if (notification.object != _settingsWindow) {
+        return;
+    }
+    _settingsHotKeyMainKeyDown = NO;
+    [self cancelShortcutRecording];
+    if (_shortcutEventMonitor != nil) {
+        [NSEvent removeMonitor:_shortcutEventMonitor];
+        _shortcutEventMonitor = nil;
+    }
+}
+
+- (void)windowDidBecomeKey:(NSNotification *)notification {
+    if (notification.object == _settingsWindow && _recordingTarget == ShortcutRecorderTargetNone) {
+        [self refreshSettingsStatus];
+    }
 }
 
 - (void)syncLaunchAtLoginMenuItem {
     SMAppServiceStatus status = SMAppService.mainAppService.status;
-    _launchAtLoginMenuItem.state = status == SMAppServiceStatusEnabled
+    NSControlStateValue state = status == SMAppServiceStatusEnabled
         ? NSControlStateValueOn
         : status == SMAppServiceStatusRequiresApproval
             ? NSControlStateValueMixed
             : NSControlStateValueOff;
+    _launchAtLoginMenuItem.state = state;
     _launchAtLoginMenuItem.title = status == SMAppServiceStatusRequiresApproval
         ? @"Launch at Login (Approval Required)…"
         : @"Launch at Login";
+    _launchAtLoginMenuItem.hidden = status == SMAppServiceStatusEnabled;
+    _launchAtLoginCheckbox.state = state;
+    _launchAtLoginCheckbox.title = @"Launch at Login";
 }
 
 - (void)registerLaunchAtLoginIfNeeded {
@@ -1054,6 +1660,7 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
 - (void)menuWillOpen:(NSMenu *)menu {
     (void)menu;
     [self syncLaunchAtLoginMenuItem];
+    _accessibilityMenuItem.hidden = AXIsProcessTrusted();
     if (!_toggleInProgress) {
         [self showIdleStatus];
     }
@@ -1104,10 +1711,15 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     (void)notification;
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     NSString *savedLabel = nil;
-    BOOL hasSavedShortcut = LoadHotKeyPreference(&_hotKeyKeyCode, &_hotKeyModifiers, &savedLabel);
+    LoadHotKeyPreference(&_hotKeyKeyCode, &_hotKeyModifiers, &savedLabel);
     _hotKeyLabel = savedLabel;
+    NSString *savedTeamsLabel = nil;
+    LoadTeamsShortcutPreference(&_teamsShortcutKeyCode,
+                                &_teamsShortcutModifiers,
+                                &savedTeamsLabel);
+    _teamsShortcutLabel = savedTeamsLabel;
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    BOOL shouldPromptForShortcut = !hasSavedShortcut && ![defaults boolForKey:kShortcutPromptShownPreference];
+    BOOL shouldShowOnboarding = ![defaults boolForKey:kOnboardingCompletedPreference];
 
     _statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:26];
     [self showReadyStatus];
@@ -1122,11 +1734,18 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     [menu addItem:_toggleMenuItem];
     [menu addItem:[NSMenuItem separatorItem]];
 
-    NSMenuItem *shortcutItem = [[NSMenuItem alloc] initWithTitle:@"Keyboard Shortcut…"
-                                                          action:@selector(configureShortcut:)
+    NSMenuItem *settingsItem = [[NSMenuItem alloc] initWithTitle:@"Settings…"
+                                                          action:@selector(showSettings:)
                                                    keyEquivalent:@""];
-    shortcutItem.target = self;
-    [menu addItem:shortcutItem];
+    settingsItem.target = self;
+    [menu addItem:settingsItem];
+
+    _updateMenuItem = [[NSMenuItem alloc] initWithTitle:@"Check for Updates…"
+                                                 action:@selector(checkForUpdatesFromMenu:)
+                                          keyEquivalent:@""];
+    _updateMenuItem.target = self;
+    [menu addItem:_updateMenuItem];
+    [menu addItem:[NSMenuItem separatorItem]];
 
     _launchAtLoginMenuItem = [[NSMenuItem alloc] initWithTitle:@"Launch at Login"
                                                         action:@selector(toggleLaunchAtLogin:)
@@ -1134,11 +1753,20 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     _launchAtLoginMenuItem.target = self;
     [menu addItem:_launchAtLoginMenuItem];
 
-    NSMenuItem *accessibilityItem = [[NSMenuItem alloc] initWithTitle:@"Open Accessibility Settings…"
-                                                               action:@selector(openAccessibilitySettings:)
-                                                        keyEquivalent:@""];
-    accessibilityItem.target = self;
-    [menu addItem:accessibilityItem];
+    _accessibilityMenuItem = [[NSMenuItem alloc] initWithTitle:@"Open Accessibility Settings…"
+                                                        action:@selector(openAccessibilitySettings:)
+                                                 keyEquivalent:@""];
+    _accessibilityMenuItem.target = self;
+    _accessibilityMenuItem.hidden = AXIsProcessTrusted();
+    [menu addItem:_accessibilityMenuItem];
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *versionItem = [[NSMenuItem alloc]
+        initWithTitle:[NSString stringWithFormat:@"Version %@", CurrentVersion()]
+               action:nil
+        keyEquivalent:@""];
+    versionItem.enabled = NO;
+    [menu addItem:versionItem];
 
     NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit Teams Mute Helper"
                                                       action:@selector(quitHelper:)
@@ -1148,7 +1776,7 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     _statusItem.menu = menu;
 
     BOOL trusted = AXIsProcessTrusted();
-    if (!shouldPromptForShortcut) {
+    if (!shouldShowOnboarding) {
         NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
         trusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
     }
@@ -1162,19 +1790,12 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
              trusted ? @"yes" : @"no", _hotKeyRegistered ? @"yes" : @"no");
     [self showIdleStatus];
 
-    if (shouldPromptForShortcut) {
+    if (shouldShowOnboarding) {
         dispatch_async(dispatch_get_main_queue(), ^{
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-            [[NSRunningApplication currentApplication] activateWithOptions:NSApplicationActivateIgnoringOtherApps];
-#pragma clang diagnostic pop
-            [self presentShortcutRecorderForFirstLaunch:YES];
-            [defaults setBool:YES forKey:kShortcutPromptShownPreference];
-
-            NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
-            AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
-            [self showIdleStatus];
+            [self showSettingsWindowForOnboarding:YES];
         });
+    } else {
+        [self scheduleAutomaticUpdateCheck];
     }
 }
 
@@ -1185,6 +1806,9 @@ static OSStatus HandleHotKeyEvent(EventHandlerCallRef nextHandler, EventRef even
     }
     if (_eventHandler != NULL) {
         RemoveEventHandler(_eventHandler);
+    }
+    if (_shortcutEventMonitor != nil) {
+        [NSEvent removeMonitor:_shortcutEventMonitor];
     }
 }
 
@@ -1238,6 +1862,6 @@ int main(int argc, const char *argv[]) {
             return 0;
         }
 
-        return RunLockedHelper(diagnoseOnly);
+        return RunLockedHelper(diagnoseOnly, NO);
     }
 }

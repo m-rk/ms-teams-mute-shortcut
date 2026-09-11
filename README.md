@@ -8,13 +8,13 @@ Toggle mute in Microsoft Teams from any macOS app with a configurable global key
 
 Teams Mute Helper is a tiny native menu bar app. Signed and notarized universal builds are available from GitHub, and the complete Objective-C source remains available for inspection or local builds. It owns both the global hotkey and Accessibility permission, so the app you are working in never becomes part of the permission chain.
 
-The helper launches at login, remains idle until the hotkey is pressed, and has no microphone or network access.
+The helper launches at login and remains idle until the hotkey is pressed. It has no microphone access; its only network use is checking GitHub for new releases when enabled or requested.
 
 ## Requirements
 
 - macOS 13 or later
 - The current Microsoft Teams desktop app (`com.microsoft.teams2`)
-- Teams' **Toggle mute** command assigned to **Shift-Command-M**
+- A Teams keyboard shortcut assigned to **Toggle mute**; the helper defaults to Teams' standard **Shift-Command-M**
 
 ## Set up
 
@@ -32,7 +32,7 @@ Older Homebrew versions that do not have `brew trust` can skip the first command
 
 Or download the latest signed build from [GitHub Releases](https://github.com/m-rk/ms-teams-mute-shortcut/releases/latest), unzip it, and move **Teams Mute Helper.app** to your Applications folder.
 
-Open the app once. Its menu bar icon appears and its native macOS login item is enabled automatically. You can turn **Launch at Login** off or back on from the helper's menu.
+Open the app once. Its menu bar icon appears and its native macOS login item is enabled automatically. Launch at Login can be managed in **Settings**; the menu offers to enable it only when it is off.
 
 If macOS says the login item needs approval, open **System Settings → General → Login Items & Extensions** and enable Teams Mute Helper.
 
@@ -46,21 +46,25 @@ Install Xcode Command Line Tools (`xcode-select --install`), clone or download t
 
 This creates an ad-hoc signed universal build in `~/Applications`. Because its signature is local to your Mac, Accessibility permission may need to be reset after rebuilding it.
 
-### 2. Choose the global shortcut
+### 2. Choose the shortcuts
 
-On the first launch, **Control-Shift-Command-A** is preselected. Click **Use Shortcut** to keep it. To choose another, click **Record a Different Shortcut**, then press one combination.
+On first launch, the Settings window shows both shortcuts. **Control-Shift-Command-A** is the default global shortcut, and **Shift-Command-M** is the default shortcut sent to Teams.
 
-To change it later, click the helper icon and choose **Keyboard Shortcut…**. In the **Toggle Teams Mute global keyboard shortcut** dialog, nothing is recorded until you click **Record New Shortcut**. The recorder stops listening after one combination so further typing cannot replace it accidentally. Click **Save** to apply it, or **Restore Default** to return to Control-Shift-Command-A.
+Click either displayed shortcut when you are ready to change it, then press one combination. The recorder stops listening after that combination and saves it immediately. **Reset** restores that row's default.
 
-The choice persists across app and Mac restarts.
+Use **Test** beside the Teams shortcut while a meeting is open. The helper deliberately toggles mute once and confirms whether the microphone state changed. Both choices persist across app and Mac restarts.
 
-### 3. Allow Accessibility access
+### 3. Choose update behaviour
+
+Automatic daily update checks are enabled during onboarding and can be turned off in Settings. **Check for Updates…** performs a manual check at any time. The helper reports when a newer GitHub release is available but does not install it automatically.
+
+### 4. Allow Accessibility access
 
 When prompted, allow Teams Mute Helper to control your computer. You can also open **System Settings → Privacy & Security → Accessibility**, add Teams Mute Helper from your Applications folder, and enable it.
 
 Accessibility is used only to locate the active Teams meeting, deliver Teams' own mute shortcut, verify the result, and restore your previous app.
 
-### 4. Try it
+### 5. Try it
 
 Join a Teams meeting and press your global shortcut from another app. Teams should toggle mute and return focus to the previous app.
 
@@ -75,7 +79,7 @@ If you previously installed the source-built helper, update the repository and r
 1. A native macOS login item starts Teams Mute Helper.
 2. The helper registers your saved shortcut directly with macOS, using **Control-Shift-Command-A** by default.
 3. When pressed, it finds the active Teams meeting and reads whether the microphone control says **Mute mic** or **Unmute mic**.
-4. When you release the shortcut's main key, it sends Teams' **Shift-Command-M** shortcut directly to the Teams process without waiting for the modifier keys or changing focus.
+4. When you release the shortcut's main key, it sends your configured Teams shortcut directly to the Teams process without waiting for the modifier keys or changing focus.
 5. It verifies the mic state as soon as it changes and returns to waiting.
 
 If background delivery does not change the mic state, the helper retries with macOS Accessibility keyboard delivery. Only if both targeted methods fail does it wait for any held modifier keys, briefly bring Teams forward, and retry with system HID delivery before restoring the previous app. It verifies the microphone state after each attempt, so a successful attempt is not toggled a second time. Overlapping hotkey presses are ignored while a toggle is running.
@@ -87,8 +91,9 @@ Because the persistent helper receives the global hotkey itself, Shortcuts, Serv
 Click the microphone icon to:
 
 - toggle Teams mute without using the keyboard;
-- change or restore the global keyboard shortcut;
-- turn Launch at Login on or off;
+- open Settings to manage both shortcuts, update checks, login behaviour, and Accessibility;
+- check for updates;
+- enable Launch at Login when it is off;
 - open Accessibility settings; or
 - quit the helper. Open **Teams Mute Helper** from Applications to start it again.
 
@@ -118,7 +123,7 @@ Official releases keep the same Developer ID signature across updates. Locally r
 
 ### Teams focuses but mute does not change
 
-Open **Teams → Settings and more → Keyboard shortcuts** and confirm **Toggle mute** is assigned to **Shift-Command-M**. Fully quit and reopen Teams after changing its shortcut preset.
+Open **Teams → Settings and more → Keyboard shortcuts** and find **Toggle mute**. Confirm that its combination matches **Teams shortcut** in the helper's Settings. Fully quit and reopen Teams after changing its shortcut preset, then use **Test** in the helper.
 
 Microsoft documents **Shift-Command-M** as the macOS mute toggle in its [Teams keyboard shortcut reference](https://support.microsoft.com/en-us/accessibility/teams/keyboard-shortcuts-for-microsoft-teams).
 
@@ -167,7 +172,7 @@ You can then remove the helper's entry from Accessibility settings.
 - [`RELEASING.md`](RELEASING.md): documents the maintainer-only signed release process.
 - [`assets/app-icon.svg`](assets/app-icon.svg), [`assets/app-icon.png`](assets/app-icon.png), and [`assets/AppIcon.icns`](assets/AppIcon.icns): vector source, README image, and macOS bundle icon.
 - [`assets/menu-bar-icon.svg`](assets/menu-bar-icon.svg) and [`assets/menu-bar-icon.png`](assets/menu-bar-icon.png): monochrome source and bundled macOS template icon.
-- [`TeamsMuteHelper.m`](TeamsMuteHelper.m): owns the global hotkey, activates Teams, sends its mute shortcut, and verifies the state change.
+- [`TeamsMuteHelper.m`](TeamsMuteHelper.m): owns both shortcut settings, update checks, the global listener, Teams delivery, and state verification.
 - [`TeamsMuteHelper-Info.plist`](TeamsMuteHelper-Info.plist): defines the native background app bundle.
 - [`toggle-teams-mute.applescript`](toggle-teams-mute.applescript): optional compatibility launcher for Shortcuts.
 
@@ -180,7 +185,9 @@ You can then remove the helper's entry from Accessibility settings.
 
 ## Privacy
 
-The helper does not access audio, files, or the network. Accessibility permission is used to search Teams' local accessibility hierarchy for the microphone control, send Teams' mute shortcut, verify the control changed, and restore focus. The menu bar process remains idle between hotkey presses. Normal runs retain no activity data; local diagnostic logging is explicit and contains no meeting content. Nothing is transmitted.
+The helper does not access audio or files. Accessibility permission is used to search Teams' local accessibility hierarchy for the microphone control, send Teams' mute shortcut, verify the control changed, and restore focus. The menu bar process remains idle between hotkey presses. Normal runs retain no activity data; local diagnostic logging is explicit and contains no meeting content.
+
+When automatic update checks are enabled, or **Check for Updates…** is selected, the helper requests public release metadata from GitHub. The request contains no meeting, microphone, Teams, or shortcut data. Automatic checks can be disabled in Settings.
 
 The complete helper source and release tooling are readable in this repository. Official releases are signed with Apple Developer ID, notarized by Apple, and contain universal Apple silicon and Intel code.
 
