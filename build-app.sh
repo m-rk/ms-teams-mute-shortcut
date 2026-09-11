@@ -32,6 +32,7 @@ fi
 /bin/cp "${repo_dir}/TeamsMuteHelper-Info.plist" "$plist"
 /bin/cp "${repo_dir}/assets/AppIcon.icns" "${output_app}/Contents/Resources/AppIcon.icns"
 /bin/cp "${repo_dir}/assets/menu-bar-icon.png" "${output_app}/Contents/Resources/MenuBarIcon.png"
+/bin/cp "${repo_dir}/assets/github-mark.svg" "${output_app}/Contents/Resources/GitHubMark.svg"
 
 set --
 for architecture in $architectures; do

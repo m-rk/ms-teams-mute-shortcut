@@ -45,6 +45,7 @@ static NSString *const kTeamsShortcutLabelPreference = @"TeamsShortcutLabel";
 static NSString *const kOnboardingCompletedPreference = @"SettingsOnboardingCompleted";
 static NSString *const kAutomaticUpdateChecksPreference = @"AutomaticUpdateChecks";
 static NSString *const kLastUpdateCheckPreference = @"LastUpdateCheck";
+static NSString *const kRepositoryURL = @"https://github.com/m-rk/ms-teams-mute-shortcut";
 static const NSTimeInterval kAutomaticUpdateCheckInterval = 24.0 * 60.0 * 60.0;
 
 @interface TeamsMuteHelperDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate> {
@@ -1313,16 +1314,36 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     [content addSubview:title];
 
     NSTextField *version = SettingsLabel([NSString stringWithFormat:@"Version %@", CurrentVersion()],
-                                         NSMakeRect(117, 471, 420, 22));
+                                         NSMakeRect(117, 471, 95, 22));
     version.textColor = NSColor.secondaryLabelColor;
     [content addSubview:version];
 
-    NSTextField *summary = SettingsLabel(@"Mute or unmute Microsoft Teams from anywhere with one global shortcut.",
-                                         NSMakeRect(116, 432, 430, 34));
+    NSButton *repositoryLink = [NSButton buttonWithTitle:@"GitHub"
+                                                   target:self
+                                                   action:@selector(openRepository:)];
+    repositoryLink.frame = NSMakeRect(211, 472, 72, 24);
+    repositoryLink.bordered = NO;
+    repositoryLink.font = [NSFont systemFontOfSize:12];
+    repositoryLink.contentTintColor = NSColor.linkColor;
+    repositoryLink.imagePosition = NSImageLeading;
+    repositoryLink.toolTip = @"Open the GitHub repository";
+    NSString *githubMarkPath = [NSBundle.mainBundle pathForResource:@"GitHubMark" ofType:@"svg"];
+    NSImage *githubMark = githubMarkPath != nil
+        ? [[NSImage alloc] initWithContentsOfFile:githubMarkPath]
+        : nil;
+    if (githubMark != nil) {
+        githubMark.size = NSMakeSize(14, 14);
+        githubMark.template = YES;
+        repositoryLink.image = githubMark;
+    }
+    [content addSubview:repositoryLink];
+
+    NSTextField *summary = SettingsLabel(@"Microsoft Teams mute toggle from anywhere with a global shortcut",
+                                         NSMakeRect(116, 440, 430, 22));
     summary.textColor = NSColor.secondaryLabelColor;
-    summary.maximumNumberOfLines = 2;
-    summary.usesSingleLineMode = NO;
-    summary.lineBreakMode = NSLineBreakByWordWrapping;
+    summary.maximumNumberOfLines = 1;
+    summary.usesSingleLineMode = YES;
+    summary.lineBreakMode = NSLineBreakByClipping;
     [content addSubview:summary];
 
     NSTextField *shortcutsTitle = SettingsLabel(@"Shortcuts", NSMakeRect(30, 397, 500, 22));
@@ -1670,6 +1691,11 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     (void)sender;
     NSURL *url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
     [[NSWorkspace sharedWorkspace] openURL:url];
+}
+
+- (void)openRepository:(id)sender {
+    (void)sender;
+    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:kRepositoryURL]];
 }
 
 - (void)quitHelper:(id)sender {

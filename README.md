@@ -10,6 +10,10 @@ Teams Mute Helper is a tiny native menu bar app. Signed and notarized universal 
 
 The helper launches at login and remains idle until the hotkey is pressed. It has no microphone access; its only network use is checking GitHub for new releases when enabled or requested.
 
+<p align="center">
+  <img src="assets/settings.jpg" alt="Teams Mute Helper settings showing configurable shortcuts, updates, startup, and Accessibility status" width="580">
+</p>
+
 ## Requirements
 
 - macOS 13 or later
@@ -172,6 +176,8 @@ You can then remove the helper's entry from Accessibility settings.
 - [`RELEASING.md`](RELEASING.md): documents the maintainer-only signed release process.
 - [`assets/app-icon.svg`](assets/app-icon.svg), [`assets/app-icon.png`](assets/app-icon.png), and [`assets/AppIcon.icns`](assets/AppIcon.icns): vector source, README image, and macOS bundle icon.
 - [`assets/menu-bar-icon.svg`](assets/menu-bar-icon.svg) and [`assets/menu-bar-icon.png`](assets/menu-bar-icon.png): monochrome source and bundled macOS template icon.
+- [`assets/github-mark.svg`](assets/github-mark.svg): monochrome GitHub mark used by the repository link in Settings.
+- [`assets/settings.jpg`](assets/settings.jpg): README screenshot of the Settings window.
 - [`TeamsMuteHelper.m`](TeamsMuteHelper.m): owns both shortcut settings, update checks, the global listener, Teams delivery, and state verification.
 - [`TeamsMuteHelper-Info.plist`](TeamsMuteHelper-Info.plist): defines the native background app bundle.
 - [`toggle-teams-mute.applescript`](toggle-teams-mute.applescript): optional compatibility launcher for Shortcuts.
