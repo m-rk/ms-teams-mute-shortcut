@@ -49,6 +49,25 @@ if [ -n "$(/usr/bin/git -C "$repo_dir" status --porcelain)" ]; then
 	exit 1
 fi
 
+if [ "$publish" = "--publish" ]; then
+	/usr/bin/git -C "$repo_dir" fetch --prune origin "+refs/heads/main:refs/remotes/origin/main"
+	local_head=$(/usr/bin/git -C "$repo_dir" rev-parse HEAD)
+	remote_head=$(/usr/bin/git -C "$repo_dir" rev-parse refs/remotes/origin/main)
+	if [ "$local_head" != "$remote_head" ]; then
+		/usr/bin/printf 'Release commit must be pushed to origin/main before publishing.\n' >&2
+		exit 1
+	fi
+	if /usr/bin/git -C "$repo_dir" rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+		/usr/bin/printf 'Tag already exists: %s\n' "$tag" >&2
+		exit 1
+	fi
+	if gh release view "$tag" --repo m-rk/ms-teams-mute-shortcut >/dev/null 2>&1; then
+		/usr/bin/printf 'GitHub release already exists: %s\n' "$tag" >&2
+		exit 1
+	fi
+	"${repo_dir}/scripts/update-homebrew-cask.sh" --check
+fi
+
 sign_identity=${TEAMS_MUTE_SIGN_IDENTITY:-$(
 	/usr/bin/security find-identity -v -p codesigning |
 		/usr/bin/sed -n 's/.*"\(Developer ID Application:.*\)"/\1/p' |
@@ -93,4 +112,6 @@ if [ "$publish" = "--publish" ]; then
 			--title "Teams Mute Helper ${version}" \
 			--generate-notes \
 			--verify-tag
+	checksum=$(/usr/bin/awk 'NR == 1 { print $1 }' "$checksum_path")
+	"${repo_dir}/scripts/update-homebrew-cask.sh" "$version" "$checksum"
 fi

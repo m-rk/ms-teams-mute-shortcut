@@ -64,6 +64,16 @@ Accessibility is used only to locate the active Teams meeting, deliver Teams' ow
 
 Automatic daily update checks are enabled by default and can be turned off in Settings. **Check for Updates…** performs a manual check at any time. The helper reports when a newer GitHub release is available but does not install it automatically.
 
+If you installed with Homebrew, update and reopen the helper with:
+
+```sh
+brew update
+brew upgrade --cask m-rk/tap/teams-mute-helper
+open -a "Teams Mute Helper"
+```
+
+Your shortcuts and other settings are preserved. If you installed from GitHub Releases, download the new archive and replace the existing app in Applications.
+
 ### 5. Choose usage sharing
 
 **Share anonymous usage data** is checked on first launch. Nothing is sent until you close the onboarding window, giving you a chance to turn it off first. The setting remains available in Settings and can be changed at any time.
