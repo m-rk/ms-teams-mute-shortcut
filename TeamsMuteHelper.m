@@ -1579,7 +1579,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
 }
 
 - (void)buildSettingsWindow {
-    NSRect frame = NSMakeRect(0, 0, 580, 590);
+    NSRect frame = NSMakeRect(0, 0, 580, 560);
     NSPanel *settingsPanel = [[NSPanel alloc]
         initWithContentRect:frame
                   styleMask:(NSWindowStyleMaskTitled |
@@ -1597,24 +1597,24 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     [_settingsWindow standardWindowButton:NSWindowZoomButton].hidden = YES;
 
     NSView *content = _settingsWindow.contentView;
-    NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(26, 486, 72, 72)];
+    NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(26, 456, 72, 72)];
     icon.image = NSApp.applicationIconImage;
     icon.imageScaling = NSImageScaleProportionallyUpOrDown;
     [content addSubview:icon];
 
-    NSTextField *title = SettingsLabel(@"Teams Mute Helper", NSMakeRect(116, 527, 430, 32));
+    NSTextField *title = SettingsLabel(@"Teams Mute Helper", NSMakeRect(116, 497, 430, 32));
     title.font = [NSFont systemFontOfSize:24 weight:NSFontWeightSemibold];
     [content addSubview:title];
 
     NSTextField *version = SettingsLabel([NSString stringWithFormat:@"Version %@", CurrentVersion()],
-                                         NSMakeRect(117, 501, 95, 22));
+                                         NSMakeRect(117, 471, 95, 22));
     version.textColor = NSColor.secondaryLabelColor;
     [content addSubview:version];
 
     NSButton *repositoryLink = [NSButton buttonWithTitle:@"GitHub"
                                                    target:self
                                                    action:@selector(openRepository:)];
-    repositoryLink.frame = NSMakeRect(211, 502, 72, 24);
+    repositoryLink.frame = NSMakeRect(211, 472, 72, 24);
     repositoryLink.bordered = NO;
     repositoryLink.font = [NSFont systemFontOfSize:12];
     repositoryLink.contentTintColor = NSColor.linkColor;
@@ -1632,55 +1632,55 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     [content addSubview:repositoryLink];
 
     NSTextField *summary = SettingsLabel(@"A global shortcut key for Microsoft Teams mute and unmute",
-                                         NSMakeRect(116, 472, 430, 22));
+                                         NSMakeRect(116, 442, 430, 22));
     summary.textColor = NSColor.secondaryLabelColor;
     summary.maximumNumberOfLines = 1;
     summary.usesSingleLineMode = YES;
     summary.lineBreakMode = NSLineBreakByClipping;
     [content addSubview:summary];
 
-    NSBox *settings = [[NSBox alloc] initWithFrame:NSMakeRect(20, 18, 540, 430)];
+    NSBox *settings = [[NSBox alloc] initWithFrame:NSMakeRect(20, 18, 540, 400)];
     settings.titlePosition = NSNoTitle;
     [content addSubview:settings];
 
-    [settings addSubview:SettingsLabel(@"Global shortcut", NSMakeRect(20, 374, 120, 24))];
+    [settings addSubview:SettingsLabel(@"Global shortcut", NSMakeRect(20, 344, 120, 24))];
     _globalShortcutField = ShortcutButton(self,
                                           @selector(beginGlobalShortcutRecording:),
-                                          NSMakeRect(150, 370, 190, 32));
+                                          NSMakeRect(150, 340, 190, 32));
     [settings addSubview:_globalShortcutField];
     _globalResetButton = SettingsButton(@"Reset", self,
                                          @selector(restoreDefaultGlobalShortcut:),
-                                         NSMakeRect(350, 370, 72, 32));
+                                         NSMakeRect(350, 340, 72, 32));
     [settings addSubview:_globalResetButton];
 
-    [settings addSubview:SettingsLabel(@"Teams shortcut", NSMakeRect(20, 333, 120, 24))];
+    [settings addSubview:SettingsLabel(@"Teams shortcut", NSMakeRect(20, 303, 120, 24))];
     _teamsShortcutField = ShortcutButton(self,
                                          @selector(beginTeamsShortcutRecording:),
-                                         NSMakeRect(150, 329, 190, 32));
+                                         NSMakeRect(150, 299, 190, 32));
     [settings addSubview:_teamsShortcutField];
     _teamsResetButton = SettingsButton(@"Reset", self,
                                         @selector(restoreDefaultTeamsShortcut:),
-                                        NSMakeRect(350, 329, 72, 32));
+                                        NSMakeRect(350, 299, 72, 32));
     [settings addSubview:_teamsResetButton];
     _testTeamsShortcutButton = SettingsButton(@"Test", self,
                                                @selector(testTeamsShortcut:),
-                                               NSMakeRect(432, 329, 72, 32));
+                                               NSMakeRect(432, 299, 72, 32));
     [settings addSubview:_testTeamsShortcutButton];
 
-    _recordingHint = SettingsLabel(@"", NSMakeRect(20, 298, 500, 20));
+    _recordingHint = SettingsLabel(@"", NSMakeRect(20, 268, 500, 20));
     _recordingHint.textColor = NSColor.secondaryLabelColor;
     [settings addSubview:_recordingHint];
 
-    NSBox *shortcutSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, 281, 500, 1)];
+    NSBox *shortcutSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, 251, 500, 1)];
     shortcutSeparator.boxType = NSBoxSeparator;
     [settings addSubview:shortcutSeparator];
 
     _launchAtLoginCheckbox = [NSButton checkboxWithTitle:@"Launch at Login"
                                                   target:self
                                                   action:@selector(toggleLaunchAtLogin:)];
-    _launchAtLoginCheckbox.frame = NSMakeRect(20, 234, 140, 24);
+    _launchAtLoginCheckbox.frame = NSMakeRect(20, 204, 140, 24);
     [settings addSubview:_launchAtLoginCheckbox];
-    _accessibilityStatusBadge = [[NSView alloc] initWithFrame:NSMakeRect(170, 233, 190, 24)];
+    _accessibilityStatusBadge = [[NSView alloc] initWithFrame:NSMakeRect(170, 203, 190, 24)];
     _accessibilityStatusBadge.wantsLayer = YES;
     _accessibilityStatusBadge.layer.cornerRadius = 6.0;
     [settings addSubview:_accessibilityStatusBadge];
@@ -1698,39 +1698,39 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     ]];
     _accessibilitySettingsButton = SettingsButton(@"Open Settings…", self,
                                                    @selector(openAccessibilitySettings:),
-                                                   NSMakeRect(370, 228, 150, 32));
+                                                   NSMakeRect(370, 198, 150, 32));
     [settings addSubview:_accessibilitySettingsButton];
 
-    NSBox *startupSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, 213, 500, 1)];
+    NSBox *startupSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, 183, 500, 1)];
     startupSeparator.boxType = NSBoxSeparator;
     [settings addSubview:startupSeparator];
 
     _automaticUpdatesCheckbox = [NSButton checkboxWithTitle:@"Check automatically once a day"
                                                      target:self
                                                      action:@selector(automaticUpdateSettingChanged:)];
-    _automaticUpdatesCheckbox.frame = NSMakeRect(20, 168, 300, 24);
+    _automaticUpdatesCheckbox.frame = NSMakeRect(20, 138, 300, 24);
     [settings addSubview:_automaticUpdatesCheckbox];
     _checkUpdatesButton = SettingsButton(@"Check for Updates…", self,
                                           @selector(checkForUpdates:),
-                                          NSMakeRect(350, 163, 170, 32));
+                                          NSMakeRect(350, 133, 170, 32));
     [settings addSubview:_checkUpdatesButton];
-    _updateStatusLabel = SettingsLabel(@"", NSMakeRect(40, 141, 480, 20));
+    _updateStatusLabel = SettingsLabel(@"", NSMakeRect(40, 111, 480, 20));
     _updateStatusLabel.font = [NSFont systemFontOfSize:11];
     _updateStatusLabel.textColor = NSColor.secondaryLabelColor;
     [settings addSubview:_updateStatusLabel];
 
-    NSBox *updatesSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, 113, 500, 1)];
+    NSBox *updatesSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, 83, 500, 1)];
     updatesSeparator.boxType = NSBoxSeparator;
     [settings addSubview:updatesSeparator];
 
     _anonymousUsageCheckbox = [NSButton checkboxWithTitle:@"Share anonymous usage data"
                                                    target:self
                                                    action:@selector(anonymousUsageSettingChanged:)];
-    _anonymousUsageCheckbox.frame = NSMakeRect(20, 68, 300, 24);
+    _anonymousUsageCheckbox.frame = NSMakeRect(20, 38, 300, 24);
     [settings addSubview:_anonymousUsageCheckbox];
     NSTextField *privacyDetail = SettingsLabel(
         @"Help improve Teams Mute Helper by sharing basic installation and usage totals.",
-        NSMakeRect(40, 42, 480, 20));
+        NSMakeRect(40, 12, 480, 20));
     privacyDetail.font = [NSFont systemFontOfSize:11];
     privacyDetail.textColor = NSColor.secondaryLabelColor;
     privacyDetail.maximumNumberOfLines = 1;
