@@ -8,10 +8,10 @@ Toggle mute in Microsoft Teams from any macOS app with a configurable global key
 
 Teams Mute Helper is a tiny native menu bar app. Signed and notarized universal builds are available from GitHub, and the complete Objective-C source remains available for inspection or local builds. It owns both the global hotkey and Accessibility permission, so the app you are working in never becomes part of the permission chain.
 
-The helper launches at login and remains idle until the hotkey is pressed. It has no microphone access; its only network use is checking GitHub for new releases when enabled or requested.
+The helper launches at login and remains idle until the hotkey is pressed. It has no microphone access. Network use is limited to update checks and the optional anonymous usage sharing described below.
 
 <p align="center">
-  <img src="assets/settings.jpg" alt="Teams Mute Helper settings showing configurable shortcuts, updates, startup, and Accessibility status" width="580">
+  <img src="assets/settings.jpg" alt="Teams Mute Helper settings showing configurable shortcuts, startup, updates, anonymous usage sharing, and Accessibility status" width="580">
 </p>
 
 ## Requirements
@@ -58,17 +58,23 @@ Click either displayed shortcut when you are ready to change it, then press one 
 
 Use **Test** beside the Teams shortcut while a meeting is open. The helper deliberately toggles mute once and confirms whether the microphone state changed. Both choices persist across app and Mac restarts.
 
-### 3. Choose update behaviour
-
-Automatic daily update checks are enabled during onboarding and can be turned off in Settings. **Check for Updates…** performs a manual check at any time. The helper reports when a newer GitHub release is available but does not install it automatically.
-
-### 4. Allow Accessibility access
+### 3. Allow Accessibility access
 
 When prompted, allow Teams Mute Helper to control your computer. You can also open **System Settings → Privacy & Security → Accessibility**, add Teams Mute Helper from your Applications folder, and enable it.
 
 Accessibility is used only to locate the active Teams meeting, deliver Teams' own mute shortcut, verify the result, and restore your previous app.
 
-### 5. Try it
+### 4. Choose update behaviour
+
+Automatic daily update checks are enabled during onboarding and can be turned off in Settings. **Check for Updates…** performs a manual check at any time. The helper reports when a newer GitHub release is available but does not install it automatically.
+
+### 5. Choose usage sharing
+
+**Share anonymous usage data** is checked on first launch. Nothing is sent until you close the onboarding window, giving you a chance to turn it off first. The setting remains available in Settings and can be changed at any time.
+
+When enabled, the helper sends an anonymous installation event and daily aggregate usage totals to TelemetryDeck. See [Privacy](#privacy) for the exact data included.
+
+### 6. Try it
 
 Join a Teams meeting and press your global shortcut from another app. Teams should toggle mute and return focus to the previous app.
 
@@ -95,7 +101,7 @@ Because the persistent helper receives the global hotkey itself, Shortcuts, Serv
 Click the microphone icon to:
 
 - toggle Teams mute without using the keyboard;
-- open Settings to manage both shortcuts, update checks, login behaviour, and Accessibility;
+- open Settings to manage both shortcuts, anonymous usage sharing, update checks, login behaviour, and Accessibility;
 - check for updates;
 - enable Launch at Login when it is off;
 - open Accessibility settings; or
@@ -178,7 +184,7 @@ You can then remove the helper's entry from Accessibility settings.
 - [`assets/menu-bar-icon.svg`](assets/menu-bar-icon.svg) and [`assets/menu-bar-icon.png`](assets/menu-bar-icon.png): monochrome source and bundled macOS template icon.
 - [`assets/github-mark.svg`](assets/github-mark.svg): monochrome GitHub mark used by the repository link in Settings.
 - [`assets/settings.jpg`](assets/settings.jpg): README screenshot of the Settings window.
-- [`TeamsMuteHelper.m`](TeamsMuteHelper.m): owns both shortcut settings, update checks, the global listener, Teams delivery, and state verification.
+- [`TeamsMuteHelper.m`](TeamsMuteHelper.m): owns both shortcut settings, update checks, anonymous usage reporting, the global listener, Teams delivery, and state verification.
 - [`TeamsMuteHelper-Info.plist`](TeamsMuteHelper-Info.plist): defines the native background app bundle.
 - [`toggle-teams-mute.applescript`](toggle-teams-mute.applescript): optional compatibility launcher for Shortcuts.
 
@@ -191,7 +197,21 @@ You can then remove the helper's entry from Accessibility settings.
 
 ## Privacy
 
-The helper does not access audio or files. Accessibility permission is used to search Teams' local accessibility hierarchy for the microphone control, send Teams' mute shortcut, verify the control changed, and restore focus. The menu bar process remains idle between hotkey presses. Normal runs retain no activity data; local diagnostic logging is explicit and contains no meeting content.
+The helper does not access audio or files. Accessibility permission is used to search Teams' local accessibility hierarchy for the microphone control, send Teams' mute shortcut, verify the control changed, and restore focus. Local diagnostic logging is explicit and contains no meeting content.
+
+**Share anonymous usage data** is checked during onboarding but no data is sent until the onboarding window is closed. You can turn it off before closing that window or at any time in Settings. Turning it off stops future uploads and clears usage totals waiting to be sent.
+
+When sharing is enabled, the helper sends the following to [TelemetryDeck](https://telemetrydeck.com/):
+
+- one activation event to estimate installations;
+- one daily active event;
+- daily totals for toggles started from the global shortcut, menu, and Test button;
+- daily totals for verified, unverified, and failed outcomes; and
+- the helper version, Mac architecture, and macOS major version.
+
+The helper creates a random installation identifier locally and sends only its SHA-256 hash. It never sends your configured shortcuts, meeting or account details, participant information, microphone state history, audio, filenames, foreground apps, locale, location, or diagnostic error text. TelemetryDeck [states that it does not store IP addresses](https://telemetrydeck.com/docs/guides/privacy-faq/).
+
+Usage totals are stored locally until the next successful daily upload, then cleared. Uploads use an ephemeral network session, run asynchronously, fail silently, and never delay a mute action.
 
 When automatic update checks are enabled, or **Check for Updates…** is selected, the helper requests public release metadata from GitHub. The request contains no meeting, microphone, Teams, or shortcut data. Automatic checks can be disabled in Settings.
 

@@ -23,7 +23,7 @@ Enter an app-specific password at the secure prompt. It is saved in the login Ke
 3. Run:
 
    ```sh
-   ./scripts/release.sh 0.6.0 --publish
+   ./scripts/release.sh 0.8.0 --publish
    ```
 
 The script builds a universal Apple silicon and Intel app, signs it with the first installed Developer ID Application identity, submits it to Apple for notarization, staples the ticket, checks it with Gatekeeper, creates a checksum, tags the commit, and publishes both files to GitHub Releases.

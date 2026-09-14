@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <Carbon/Carbon.h>
+#import <CommonCrypto/CommonDigest.h>
 #import <ServiceManagement/ServiceManagement.h>
 #import <fcntl.h>
 #import <sys/file.h>
@@ -31,6 +32,12 @@ typedef NS_ENUM(NSInteger, ShortcutRecorderTarget) {
     ShortcutRecorderTargetTeams,
 };
 
+typedef NS_ENUM(NSInteger, ToggleInvocationSource) {
+    ToggleInvocationSourceHotKey = 0,
+    ToggleInvocationSourceMenu,
+    ToggleInvocationSourceTest,
+};
+
 static BOOL gLoggingEnabled = NO;
 static const UInt32 kDefaultHotKeyKeyCode = kVK_ANSI_A;
 static const UInt32 kDefaultHotKeyModifiers = cmdKey | controlKey | shiftKey;
@@ -45,8 +52,23 @@ static NSString *const kTeamsShortcutLabelPreference = @"TeamsShortcutLabel";
 static NSString *const kOnboardingCompletedPreference = @"SettingsOnboardingCompleted";
 static NSString *const kAutomaticUpdateChecksPreference = @"AutomaticUpdateChecks";
 static NSString *const kLastUpdateCheckPreference = @"LastUpdateCheck";
+static NSString *const kShareAnonymousUsageDataPreference = @"ShareAnonymousUsageData";
+static NSString *const kTelemetryConsentPresentedPreference = @"TelemetryConsentPresented";
+static NSString *const kTelemetryInstallationIDPreference = @"TelemetryInstallationID";
+static NSString *const kTelemetryInstallSentPreference = @"TelemetryInstallSent";
+static NSString *const kTelemetryLastUploadPreference = @"TelemetryLastUpload";
+static NSString *const kTelemetryHotKeyCountPreference = @"TelemetryHotKeyCount";
+static NSString *const kTelemetryMenuCountPreference = @"TelemetryMenuCount";
+static NSString *const kTelemetryTestCountPreference = @"TelemetryTestCount";
+static NSString *const kTelemetryVerifiedCountPreference = @"TelemetryVerifiedCount";
+static NSString *const kTelemetryUnverifiedCountPreference = @"TelemetryUnverifiedCount";
+static NSString *const kTelemetryFailedCountPreference = @"TelemetryFailedCount";
 static NSString *const kRepositoryURL = @"https://github.com/m-rk/ms-teams-mute-shortcut";
+static NSString *const kTelemetryAppID = @"31EEC49F-EF02-4571-BA72-49928A84CC26";
+static NSString *const kTelemetryNamespace = @"gl.tan";
 static const NSTimeInterval kAutomaticUpdateCheckInterval = 24.0 * 60.0 * 60.0;
+static const NSTimeInterval kTelemetryUploadInterval = 24.0 * 60.0 * 60.0;
+static const NSTimeInterval kTelemetryRetryInterval = 60.0 * 60.0;
 
 @interface TeamsMuteHelperDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate> {
     NSStatusItem *_statusItem;
@@ -79,6 +101,7 @@ static const NSTimeInterval kAutomaticUpdateCheckInterval = 24.0 * 60.0 * 60.0;
     NSButton *_automaticUpdatesCheckbox;
     NSTextField *_updateStatusLabel;
     NSButton *_checkUpdatesButton;
+    NSButton *_anonymousUsageCheckbox;
     NSButton *_launchAtLoginCheckbox;
     NSView *_accessibilityStatusBadge;
     NSTextField *_accessibilityStatusLabel;
@@ -86,9 +109,14 @@ static const NSTimeInterval kAutomaticUpdateCheckInterval = 24.0 * 60.0 * 60.0;
     NSURL *_availableUpdateURL;
     BOOL _updateCheckInProgress;
     BOOL _automaticUpdateCheckScheduled;
+    BOOL _telemetryUploadInProgress;
+    BOOL _telemetryUploadScheduled;
+    BOOL _presentingTelemetryOnboarding;
 }
 
 - (void)handleGlobalHotKey;
+- (void)scheduleTelemetryUpload;
+- (void)uploadTelemetryIfDue;
 
 @end
 
@@ -113,6 +141,27 @@ static BOOL IsInApplicationsFolder(void) {
 static NSString *CurrentVersion(void) {
     NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
     return version.length > 0 ? version : @"Unknown";
+}
+
+static NSString *CurrentArchitecture(void) {
+#if defined(__arm64__)
+    return @"arm64";
+#elif defined(__x86_64__)
+    return @"x86_64";
+#else
+    return @"unknown";
+#endif
+}
+
+static NSString *SHA256Hex(NSString *value) {
+    NSData *data = [value dataUsingEncoding:NSUTF8StringEncoding];
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(data.bytes, (CC_LONG)data.length, digest);
+    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+    for (NSUInteger index = 0; index < CC_SHA256_DIGEST_LENGTH; index++) {
+        [hex appendFormat:@"%02x", digest[index]];
+    }
+    return hex;
 }
 
 static BOOL VersionIsNewer(NSString *candidate, NSString *current) {
@@ -921,13 +970,254 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     });
 }
 
-- (void)requestToggleForSettingsTest:(BOOL)settingsTest {
+- (BOOL)telemetryIsEnabled {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    return [defaults boolForKey:kTelemetryConsentPresentedPreference] &&
+           [defaults boolForKey:kShareAnonymousUsageDataPreference];
+}
+
+- (NSString *)telemetryClientUser {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *installationID = [defaults stringForKey:kTelemetryInstallationIDPreference];
+    if (installationID.length == 0) {
+        installationID = NSUUID.UUID.UUIDString;
+        [defaults setObject:installationID forKey:kTelemetryInstallationIDPreference];
+    }
+    return SHA256Hex([NSString stringWithFormat:@"%@:%@", kTelemetryNamespace, installationID]);
+}
+
+- (NSDictionary *)commonTelemetryPayload {
+    NSOperatingSystemVersion systemVersion = NSProcessInfo.processInfo.operatingSystemVersion;
+    return @{
+        @"Helper.appVersion": CurrentVersion(),
+        @"Helper.osMajorVersion": @(systemVersion.majorVersion),
+        @"Helper.architecture": CurrentArchitecture(),
+    };
+}
+
+- (void)clearPendingTelemetryCounts {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    for (NSString *key in @[
+        kTelemetryHotKeyCountPreference,
+        kTelemetryMenuCountPreference,
+        kTelemetryTestCountPreference,
+        kTelemetryVerifiedCountPreference,
+        kTelemetryUnverifiedCountPreference,
+        kTelemetryFailedCountPreference,
+    ]) {
+        [defaults removeObjectForKey:key];
+    }
+}
+
+- (void)incrementTelemetryCounter:(NSString *)key {
+    if (![self telemetryIsEnabled]) {
+        return;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setInteger:[defaults integerForKey:key] + 1 forKey:key];
+}
+
+- (void)recordTelemetryAttemptFromSource:(ToggleInvocationSource)source {
+    NSString *key = kTelemetryHotKeyCountPreference;
+    if (source == ToggleInvocationSourceMenu) {
+        key = kTelemetryMenuCountPreference;
+    } else if (source == ToggleInvocationSourceTest) {
+        key = kTelemetryTestCountPreference;
+    }
+    [self incrementTelemetryCounter:key];
+}
+
+- (void)recordTelemetryResult:(int)result {
+    NSString *key = kTelemetryFailedCountPreference;
+    if (result == 0) {
+        key = kTelemetryVerifiedCountPreference;
+    } else if (result == 6) {
+        key = kTelemetryUnverifiedCountPreference;
+    }
+    [self incrementTelemetryCounter:key];
+}
+
+- (NSDictionary *)telemetrySignalWithType:(NSString *)type
+                                   payload:(NSDictionary *)additionalPayload
+                                     count:(NSNumber *)count {
+    NSMutableDictionary *payload = [[self commonTelemetryPayload] mutableCopy];
+    [payload addEntriesFromDictionary:additionalPayload ?: @{}];
+    NSMutableDictionary *signal = [@{
+        @"appID": kTelemetryAppID,
+        @"clientUser": [self telemetryClientUser],
+        @"type": type,
+        @"payload": payload,
+    } mutableCopy];
+    if (count != nil) {
+        signal[@"floatValue"] = count;
+    }
+    if ([NSProcessInfo.processInfo.environment[@"TEAMS_MUTE_TELEMETRY_TEST_MODE"] boolValue]) {
+        signal[@"isTestMode"] = @YES;
+    }
+    return signal;
+}
+
+- (void)scheduleTelemetryRetry {
+    if (![self telemetryIsEnabled] || _telemetryUploadScheduled) {
+        return;
+    }
+    _telemetryUploadScheduled = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)(kTelemetryRetryInterval * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        self->_telemetryUploadScheduled = NO;
+        [self uploadTelemetryIfDue];
+    });
+}
+
+- (void)uploadTelemetryIfDue {
+    if (![self telemetryIsEnabled] || _telemetryUploadInProgress) {
+        return;
+    }
+
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSDate *lastUpload = [defaults objectForKey:kTelemetryLastUploadPreference];
+    if (lastUpload != nil && -lastUpload.timeIntervalSinceNow < kTelemetryUploadInterval) {
+        [self scheduleTelemetryUpload];
+        return;
+    }
+
+    NSArray<NSString *> *counterKeys = @[
+        kTelemetryHotKeyCountPreference,
+        kTelemetryMenuCountPreference,
+        kTelemetryTestCountPreference,
+        kTelemetryVerifiedCountPreference,
+        kTelemetryUnverifiedCountPreference,
+        kTelemetryFailedCountPreference,
+    ];
+    NSMutableDictionary<NSString *, NSNumber *> *snapshot = [NSMutableDictionary dictionary];
+    for (NSString *key in counterKeys) {
+        snapshot[key] = @([defaults integerForKey:key]);
+    }
+
+    NSMutableArray<NSDictionary *> *signals = [NSMutableArray array];
+    BOOL includesInstall = ![defaults boolForKey:kTelemetryInstallSentPreference];
+    if (includesInstall) {
+        [signals addObject:[self telemetrySignalWithType:@"App.installActivated"
+                                                payload:nil
+                                                  count:nil]];
+    }
+    [signals addObject:[self telemetrySignalWithType:@"App.dailyActive"
+                                            payload:nil
+                                              count:nil]];
+
+    NSArray<NSDictionary *> *attempts = @[
+        @{@"key": kTelemetryHotKeyCountPreference, @"source": @"hotkey"},
+        @{@"key": kTelemetryMenuCountPreference, @"source": @"menu"},
+        @{@"key": kTelemetryTestCountPreference, @"source": @"test"},
+    ];
+    for (NSDictionary *attempt in attempts) {
+        NSNumber *count = snapshot[attempt[@"key"]];
+        if (count.integerValue > 0) {
+            [signals addObject:[self telemetrySignalWithType:@"Usage.Toggle.attempted"
+                                                    payload:@{@"Helper.invocationSource": attempt[@"source"]}
+                                                      count:count]];
+        }
+    }
+
+    NSArray<NSDictionary *> *outcomes = @[
+        @{@"key": kTelemetryVerifiedCountPreference, @"outcome": @"verified"},
+        @{@"key": kTelemetryUnverifiedCountPreference, @"outcome": @"unverified"},
+        @{@"key": kTelemetryFailedCountPreference, @"outcome": @"failed"},
+    ];
+    for (NSDictionary *outcome in outcomes) {
+        NSNumber *count = snapshot[outcome[@"key"]];
+        if (count.integerValue > 0) {
+            [signals addObject:[self telemetrySignalWithType:@"Usage.Toggle.completed"
+                                                    payload:@{@"Helper.outcome": outcome[@"outcome"]}
+                                                      count:count]];
+        }
+    }
+
+    NSError *jsonError = nil;
+    NSData *body = [NSJSONSerialization dataWithJSONObject:signals options:0 error:&jsonError];
+    if (body == nil) {
+        WriteLog(@"Could not encode anonymous usage data error=%@", jsonError.localizedDescription);
+        [self scheduleTelemetryRetry];
+        return;
+    }
+
+    NSString *endpoint = [NSString stringWithFormat:
+        @"https://nom.telemetrydeck.com/v2/namespace/%@/", kTelemetryNamespace];
+    NSMutableURLRequest *request = [NSMutableURLRequest
+        requestWithURL:[NSURL URLWithString:endpoint]
+           cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
+       timeoutInterval:10.0];
+    request.HTTPMethod = @"POST";
+    request.HTTPBody = body;
+    [request setValue:@"application/json; charset=utf-8" forHTTPHeaderField:@"Content-Type"];
+
+    _telemetryUploadInProgress = YES;
+    NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
+    configuration.timeoutIntervalForRequest = 10.0;
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:configuration];
+    NSURLSessionDataTask *task = [session
+        dataTaskWithRequest:request
+          completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        (void)data;
+        NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
+        BOOL accepted = error == nil && [http isKindOfClass:NSHTTPURLResponse.class] &&
+                        http.statusCode >= 200 && http.statusCode < 300;
+        [session finishTasksAndInvalidate];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            self->_telemetryUploadInProgress = NO;
+            if (!accepted) {
+                WriteLog(@"Anonymous usage upload failed status=%ld error=%@",
+                         (long)http.statusCode, error.localizedDescription ?: @"none");
+                [self scheduleTelemetryRetry];
+                return;
+            }
+
+            NSUserDefaults *currentDefaults = [NSUserDefaults standardUserDefaults];
+            if (includesInstall) {
+                [currentDefaults setBool:YES forKey:kTelemetryInstallSentPreference];
+            }
+            for (NSString *key in counterKeys) {
+                NSInteger remaining = MAX(0,
+                    [currentDefaults integerForKey:key] - snapshot[key].integerValue);
+                [currentDefaults setInteger:remaining forKey:key];
+            }
+            [currentDefaults setObject:[NSDate date] forKey:kTelemetryLastUploadPreference];
+            WriteLog(@"Anonymous usage upload accepted signals=%lu", (unsigned long)signals.count);
+            [self scheduleTelemetryUpload];
+        });
+    }];
+    [task resume];
+}
+
+- (void)scheduleTelemetryUpload {
+    if (![self telemetryIsEnabled] || _telemetryUploadScheduled || _telemetryUploadInProgress) {
+        return;
+    }
+    NSDate *lastUpload = [[NSUserDefaults standardUserDefaults]
+        objectForKey:kTelemetryLastUploadPreference];
+    NSTimeInterval delay = 2.0;
+    if (lastUpload != nil) {
+        NSTimeInterval elapsed = -lastUpload.timeIntervalSinceNow;
+        delay = MAX(2.0, kTelemetryUploadInterval - elapsed);
+    }
+    _telemetryUploadScheduled = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        self->_telemetryUploadScheduled = NO;
+        [self uploadTelemetryIfDue];
+    });
+}
+
+- (void)requestToggleFromSource:(ToggleInvocationSource)source {
     if (_toggleInProgress) {
         WriteLog(@"Ignored overlapping hotkey press");
         return;
     }
 
+    BOOL settingsTest = source == ToggleInvocationSourceTest;
     BOOL showSettingsFeedback = settingsTest || _settingsWindow.visible;
+    [self recordTelemetryAttemptFromSource:source];
     _toggleInProgress = YES;
     if (showSettingsFeedback) {
         _recordingHint.stringValue = @"Testing in the current Teams meeting…";
@@ -939,6 +1229,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
         int result = RunLockedHelper(NO, showSettingsFeedback);
         dispatch_async(dispatch_get_main_queue(), ^{
             self->_toggleInProgress = NO;
+            [self recordTelemetryResult:result];
             [self showResult:result];
             if (showSettingsFeedback) {
                 NSString *message = @"The shortcut was sent, but the mic state did not change.";
@@ -965,7 +1256,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
 }
 
 - (void)requestToggle {
-    [self requestToggleForSettingsTest:NO];
+    [self requestToggleFromSource:ToggleInvocationSourceHotKey];
 }
 
 - (void)handleGlobalHotKey {
@@ -987,12 +1278,12 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
 
 - (void)toggleFromMenu:(id)sender {
     (void)sender;
-    [self requestToggle];
+    [self requestToggleFromSource:ToggleInvocationSourceMenu];
 }
 
 - (void)testTeamsShortcut:(id)sender {
     (void)sender;
-    [self requestToggleForSettingsTest:YES];
+    [self requestToggleFromSource:ToggleInvocationSourceTest];
 }
 
 - (void)showShortcutConflictForDisplay:(NSString *)display {
@@ -1066,6 +1357,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     _testTeamsShortcutButton.enabled = !_toggleInProgress;
     _automaticUpdatesCheckbox.enabled = YES;
     _checkUpdatesButton.enabled = !_updateCheckInProgress;
+    _anonymousUsageCheckbox.enabled = YES;
     _launchAtLoginCheckbox.enabled = YES;
     _accessibilitySettingsButton.enabled = YES;
     _recordingHint.stringValue = hint ?: @"Join a Teams meeting to test your shortcuts.";
@@ -1090,6 +1382,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     _testTeamsShortcutButton.enabled = NO;
     _automaticUpdatesCheckbox.enabled = NO;
     _checkUpdatesButton.enabled = NO;
+    _anonymousUsageCheckbox.enabled = NO;
     _launchAtLoginCheckbox.enabled = NO;
     _accessibilitySettingsButton.enabled = NO;
     _recordingHint.stringValue = @"Use Control, Option, Shift, or Command. Press Escape to cancel.";
@@ -1286,7 +1579,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
 }
 
 - (void)buildSettingsWindow {
-    NSRect frame = NSMakeRect(0, 0, 580, 560);
+    NSRect frame = NSMakeRect(0, 0, 580, 590);
     NSPanel *settingsPanel = [[NSPanel alloc]
         initWithContentRect:frame
                   styleMask:(NSWindowStyleMaskTitled |
@@ -1304,24 +1597,24 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     [_settingsWindow standardWindowButton:NSWindowZoomButton].hidden = YES;
 
     NSView *content = _settingsWindow.contentView;
-    NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(26, 456, 72, 72)];
+    NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(26, 486, 72, 72)];
     icon.image = NSApp.applicationIconImage;
     icon.imageScaling = NSImageScaleProportionallyUpOrDown;
     [content addSubview:icon];
 
-    NSTextField *title = SettingsLabel(@"Teams Mute Helper", NSMakeRect(116, 497, 430, 32));
+    NSTextField *title = SettingsLabel(@"Teams Mute Helper", NSMakeRect(116, 527, 430, 32));
     title.font = [NSFont systemFontOfSize:24 weight:NSFontWeightSemibold];
     [content addSubview:title];
 
     NSTextField *version = SettingsLabel([NSString stringWithFormat:@"Version %@", CurrentVersion()],
-                                         NSMakeRect(117, 471, 95, 22));
+                                         NSMakeRect(117, 501, 95, 22));
     version.textColor = NSColor.secondaryLabelColor;
     [content addSubview:version];
 
     NSButton *repositoryLink = [NSButton buttonWithTitle:@"GitHub"
                                                    target:self
                                                    action:@selector(openRepository:)];
-    repositoryLink.frame = NSMakeRect(211, 472, 72, 24);
+    repositoryLink.frame = NSMakeRect(211, 502, 72, 24);
     repositoryLink.bordered = NO;
     repositoryLink.font = [NSFont systemFontOfSize:12];
     repositoryLink.contentTintColor = NSColor.linkColor;
@@ -1338,82 +1631,59 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     }
     [content addSubview:repositoryLink];
 
-    NSTextField *summary = SettingsLabel(@"Microsoft Teams mute toggle from anywhere with a global shortcut",
-                                         NSMakeRect(116, 440, 430, 22));
+    NSTextField *summary = SettingsLabel(@"A global shortcut key for Microsoft Teams mute and unmute",
+                                         NSMakeRect(116, 472, 430, 22));
     summary.textColor = NSColor.secondaryLabelColor;
     summary.maximumNumberOfLines = 1;
     summary.usesSingleLineMode = YES;
     summary.lineBreakMode = NSLineBreakByClipping;
     [content addSubview:summary];
 
-    NSTextField *shortcutsTitle = SettingsLabel(@"Shortcuts", NSMakeRect(30, 397, 500, 22));
-    shortcutsTitle.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-    [content addSubview:shortcutsTitle];
-    NSBox *shortcuts = [[NSBox alloc] initWithFrame:NSMakeRect(20, 253, 540, 136)];
-    shortcuts.titlePosition = NSNoTitle;
-    [content addSubview:shortcuts];
-    [shortcuts addSubview:SettingsLabel(@"Global shortcut", NSMakeRect(20, 88, 120, 24))];
+    NSBox *settings = [[NSBox alloc] initWithFrame:NSMakeRect(20, 18, 540, 430)];
+    settings.titlePosition = NSNoTitle;
+    [content addSubview:settings];
+
+    [settings addSubview:SettingsLabel(@"Global shortcut", NSMakeRect(20, 374, 120, 24))];
     _globalShortcutField = ShortcutButton(self,
                                           @selector(beginGlobalShortcutRecording:),
-                                          NSMakeRect(150, 84, 190, 32));
-    [shortcuts addSubview:_globalShortcutField];
+                                          NSMakeRect(150, 370, 190, 32));
+    [settings addSubview:_globalShortcutField];
     _globalResetButton = SettingsButton(@"Reset", self,
                                          @selector(restoreDefaultGlobalShortcut:),
-                                         NSMakeRect(350, 84, 72, 32));
-    [shortcuts addSubview:_globalResetButton];
+                                         NSMakeRect(350, 370, 72, 32));
+    [settings addSubview:_globalResetButton];
 
-    [shortcuts addSubview:SettingsLabel(@"Teams shortcut", NSMakeRect(20, 47, 120, 24))];
+    [settings addSubview:SettingsLabel(@"Teams shortcut", NSMakeRect(20, 333, 120, 24))];
     _teamsShortcutField = ShortcutButton(self,
                                          @selector(beginTeamsShortcutRecording:),
-                                         NSMakeRect(150, 43, 190, 32));
-    [shortcuts addSubview:_teamsShortcutField];
+                                         NSMakeRect(150, 329, 190, 32));
+    [settings addSubview:_teamsShortcutField];
     _teamsResetButton = SettingsButton(@"Reset", self,
                                         @selector(restoreDefaultTeamsShortcut:),
-                                        NSMakeRect(350, 43, 72, 32));
-    [shortcuts addSubview:_teamsResetButton];
+                                        NSMakeRect(350, 329, 72, 32));
+    [settings addSubview:_teamsResetButton];
     _testTeamsShortcutButton = SettingsButton(@"Test", self,
                                                @selector(testTeamsShortcut:),
-                                               NSMakeRect(432, 43, 72, 32));
-    [shortcuts addSubview:_testTeamsShortcutButton];
+                                               NSMakeRect(432, 329, 72, 32));
+    [settings addSubview:_testTeamsShortcutButton];
 
-    _recordingHint = SettingsLabel(@"", NSMakeRect(20, 12, 500, 20));
+    _recordingHint = SettingsLabel(@"", NSMakeRect(20, 298, 500, 20));
     _recordingHint.textColor = NSColor.secondaryLabelColor;
-    [shortcuts addSubview:_recordingHint];
+    [settings addSubview:_recordingHint];
 
-    NSTextField *updatesTitle = SettingsLabel(@"Updates", NSMakeRect(30, 219, 500, 22));
-    updatesTitle.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-    [content addSubview:updatesTitle];
-    NSBox *updates = [[NSBox alloc] initWithFrame:NSMakeRect(20, 116, 540, 95)];
-    updates.titlePosition = NSNoTitle;
-    [content addSubview:updates];
-    _automaticUpdatesCheckbox = [NSButton checkboxWithTitle:@"Check automatically once a day"
-                                                     target:self
-                                                     action:@selector(automaticUpdateSettingChanged:)];
-    _automaticUpdatesCheckbox.frame = NSMakeRect(20, 48, 300, 24);
-    [updates addSubview:_automaticUpdatesCheckbox];
-    _checkUpdatesButton = SettingsButton(@"Check for Updates…", self,
-                                          @selector(checkForUpdates:),
-                                          NSMakeRect(350, 43, 170, 32));
-    [updates addSubview:_checkUpdatesButton];
-    _updateStatusLabel = SettingsLabel(@"", NSMakeRect(20, 14, 500, 22));
-    _updateStatusLabel.textColor = NSColor.secondaryLabelColor;
-    [updates addSubview:_updateStatusLabel];
+    NSBox *shortcutSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, 281, 500, 1)];
+    shortcutSeparator.boxType = NSBoxSeparator;
+    [settings addSubview:shortcutSeparator];
 
-    NSTextField *startupTitle = SettingsLabel(@"Startup and Permissions", NSMakeRect(30, 83, 500, 22));
-    startupTitle.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
-    [content addSubview:startupTitle];
-    NSBox *startup = [[NSBox alloc] initWithFrame:NSMakeRect(20, 14, 540, 61)];
-    startup.titlePosition = NSNoTitle;
-    [content addSubview:startup];
     _launchAtLoginCheckbox = [NSButton checkboxWithTitle:@"Launch at Login"
                                                   target:self
                                                   action:@selector(toggleLaunchAtLogin:)];
-    _launchAtLoginCheckbox.frame = NSMakeRect(20, 19, 140, 24);
-    [startup addSubview:_launchAtLoginCheckbox];
-    _accessibilityStatusBadge = [[NSView alloc] initWithFrame:NSMakeRect(170, 18, 190, 24)];
+    _launchAtLoginCheckbox.frame = NSMakeRect(20, 234, 140, 24);
+    [settings addSubview:_launchAtLoginCheckbox];
+    _accessibilityStatusBadge = [[NSView alloc] initWithFrame:NSMakeRect(170, 233, 190, 24)];
     _accessibilityStatusBadge.wantsLayer = YES;
     _accessibilityStatusBadge.layer.cornerRadius = 6.0;
-    [startup addSubview:_accessibilityStatusBadge];
+    [settings addSubview:_accessibilityStatusBadge];
     _accessibilityStatusLabel = SettingsLabel(@"", NSZeroRect);
     _accessibilityStatusLabel.alignment = NSTextAlignmentCenter;
     _accessibilityStatusLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1428,8 +1698,45 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     ]];
     _accessibilitySettingsButton = SettingsButton(@"Open Settings…", self,
                                                    @selector(openAccessibilitySettings:),
-                                                   NSMakeRect(370, 14, 150, 32));
-    [startup addSubview:_accessibilitySettingsButton];
+                                                   NSMakeRect(370, 228, 150, 32));
+    [settings addSubview:_accessibilitySettingsButton];
+
+    NSBox *startupSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, 213, 500, 1)];
+    startupSeparator.boxType = NSBoxSeparator;
+    [settings addSubview:startupSeparator];
+
+    _automaticUpdatesCheckbox = [NSButton checkboxWithTitle:@"Check automatically once a day"
+                                                     target:self
+                                                     action:@selector(automaticUpdateSettingChanged:)];
+    _automaticUpdatesCheckbox.frame = NSMakeRect(20, 168, 300, 24);
+    [settings addSubview:_automaticUpdatesCheckbox];
+    _checkUpdatesButton = SettingsButton(@"Check for Updates…", self,
+                                          @selector(checkForUpdates:),
+                                          NSMakeRect(350, 163, 170, 32));
+    [settings addSubview:_checkUpdatesButton];
+    _updateStatusLabel = SettingsLabel(@"", NSMakeRect(40, 141, 480, 20));
+    _updateStatusLabel.font = [NSFont systemFontOfSize:11];
+    _updateStatusLabel.textColor = NSColor.secondaryLabelColor;
+    [settings addSubview:_updateStatusLabel];
+
+    NSBox *updatesSeparator = [[NSBox alloc] initWithFrame:NSMakeRect(20, 113, 500, 1)];
+    updatesSeparator.boxType = NSBoxSeparator;
+    [settings addSubview:updatesSeparator];
+
+    _anonymousUsageCheckbox = [NSButton checkboxWithTitle:@"Share anonymous usage data"
+                                                   target:self
+                                                   action:@selector(anonymousUsageSettingChanged:)];
+    _anonymousUsageCheckbox.frame = NSMakeRect(20, 68, 300, 24);
+    [settings addSubview:_anonymousUsageCheckbox];
+    NSTextField *privacyDetail = SettingsLabel(
+        @"Help improve Teams Mute Helper by sharing basic installation and usage totals.",
+        NSMakeRect(40, 42, 480, 20));
+    privacyDetail.font = [NSFont systemFontOfSize:11];
+    privacyDetail.textColor = NSColor.secondaryLabelColor;
+    privacyDetail.maximumNumberOfLines = 1;
+    privacyDetail.usesSingleLineMode = YES;
+    privacyDetail.lineBreakMode = NSLineBreakByClipping;
+    [settings addSubview:privacyDetail];
 }
 
 - (void)showSettingsWindowForOnboarding:(BOOL)onboarding {
@@ -1444,10 +1751,19 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
         [defaults setBool:YES forKey:kAutomaticUpdateChecksPreference];
         automaticSetting = @YES;
     }
+    NSNumber *telemetrySetting = [defaults objectForKey:kShareAnonymousUsageDataPreference];
+    if (telemetrySetting == nil) {
+        [defaults setBool:YES forKey:kShareAnonymousUsageDataPreference];
+        telemetrySetting = @YES;
+    }
     if (onboarding) {
         [defaults setBool:YES forKey:kOnboardingCompletedPreference];
     }
+    _presentingTelemetryOnboarding = ![defaults boolForKey:kTelemetryConsentPresentedPreference];
     _automaticUpdatesCheckbox.state = automaticSetting.boolValue
+        ? NSControlStateValueOn
+        : NSControlStateValueOff;
+    _anonymousUsageCheckbox.state = telemetrySetting.boolValue
         ? NSControlStateValueOn
         : NSControlStateValueOff;
     [self refreshSettingsStatus];
@@ -1471,6 +1787,18 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     if (automatic) {
         [self scheduleAutomaticUpdateCheck];
     }
+}
+
+- (void)anonymousUsageSettingChanged:(id)sender {
+    (void)sender;
+    BOOL enabled = _anonymousUsageCheckbox.state == NSControlStateValueOn;
+    [[NSUserDefaults standardUserDefaults] setBool:enabled
+                                            forKey:kShareAnonymousUsageDataPreference];
+    if (!enabled) {
+        [self clearPendingTelemetryCounts];
+        return;
+    }
+    [self scheduleTelemetryUpload];
 }
 
 - (void)checkForUpdates:(id)sender {
@@ -1590,6 +1918,16 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
 - (void)windowWillClose:(NSNotification *)notification {
     if (notification.object != _settingsWindow) {
         return;
+    }
+    if (_presentingTelemetryOnboarding) {
+        _presentingTelemetryOnboarding = NO;
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        [defaults setBool:YES forKey:kTelemetryConsentPresentedPreference];
+        if (_anonymousUsageCheckbox.state == NSControlStateValueOn) {
+            [self scheduleTelemetryUpload];
+        } else {
+            [self clearPendingTelemetryCounts];
+        }
     }
     _settingsHotKeyMainKeyDown = NO;
     [self cancelShortcutRecording];
@@ -1745,7 +2083,9 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
                                 &savedTeamsLabel);
     _teamsShortcutLabel = savedTeamsLabel;
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    BOOL shouldShowOnboarding = ![defaults boolForKey:kOnboardingCompletedPreference];
+    BOOL onboardingCompleted = [defaults boolForKey:kOnboardingCompletedPreference];
+    BOOL shouldShowSettings = !onboardingCompleted ||
+                              ![defaults boolForKey:kTelemetryConsentPresentedPreference];
 
     _statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:26];
     [self showReadyStatus];
@@ -1802,7 +2142,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     _statusItem.menu = menu;
 
     BOOL trusted = AXIsProcessTrusted();
-    if (!shouldShowOnboarding) {
+    if (!shouldShowSettings) {
         NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
         trusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
     }
@@ -1816,12 +2156,13 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
              trusted ? @"yes" : @"no", _hotKeyRegistered ? @"yes" : @"no");
     [self showIdleStatus];
 
-    if (shouldShowOnboarding) {
+    if (shouldShowSettings) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self showSettingsWindowForOnboarding:YES];
+            [self showSettingsWindowForOnboarding:!onboardingCompleted];
         });
     } else {
         [self scheduleAutomaticUpdateCheck];
+        [self scheduleTelemetryUpload];
     }
 }
 
