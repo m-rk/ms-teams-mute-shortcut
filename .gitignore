@@ -1,4 +1,5 @@
 .DS_Store
+.codex/
 *.app
 *.app.backup
 *.log
