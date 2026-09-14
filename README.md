@@ -186,7 +186,7 @@ You can then remove the helper's entry from Accessibility settings.
 - [`install-helper.sh`](install-helper.sh): builds, installs, starts, and removes the source-built helper.
 - [`scripts/release.sh`](scripts/release.sh): creates, notarizes, staples, verifies, and optionally publishes an official release.
 - [`RELEASING.md`](RELEASING.md): documents the maintainer-only signed release process.
-- [`assets/app-icon.svg`](assets/app-icon.svg), [`assets/app-icon.png`](assets/app-icon.png), and [`assets/AppIcon.icns`](assets/AppIcon.icns): vector source, README image, and macOS bundle icon.
+- [`assets/app-icon.svg`](assets/app-icon.svg), [`assets/app-icon.png`](assets/app-icon.png), and [`assets/AppIcon.icns`](assets/AppIcon.icns): vector source, README image, and macOS bundle icon; regenerate the derived assets with [`scripts/build-icons.sh`](scripts/build-icons.sh).
 - [`assets/menu-bar-icon.svg`](assets/menu-bar-icon.svg) and [`assets/menu-bar-icon.png`](assets/menu-bar-icon.png): monochrome source and bundled macOS template icon.
 - [`assets/github-mark.svg`](assets/github-mark.svg): monochrome GitHub mark used by the repository link in Settings.
 - [`assets/settings.jpg`](assets/settings.jpg): README screenshot of the Settings window.
