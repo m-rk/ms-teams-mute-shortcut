@@ -26,5 +26,7 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>TelemetryProductionBuild</key>
+	<false/>
 </dict>
 </plist>

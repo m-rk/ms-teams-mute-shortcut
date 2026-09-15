@@ -34,6 +34,12 @@ fi
 /bin/cp "${repo_dir}/assets/menu-bar-icon.png" "${output_app}/Contents/Resources/MenuBarIcon.png"
 /bin/cp "${repo_dir}/assets/github-mark.svg" "${output_app}/Contents/Resources/GitHubMark.svg"
 
+telemetry_production_build=false
+if [ "$sign_identity" != "-" ]; then
+	telemetry_production_build=true
+fi
+/usr/libexec/PlistBuddy -c "Set :TelemetryProductionBuild ${telemetry_production_build}" "$plist"
+
 set --
 for architecture in $architectures; do
 	set -- "$@" -arch "$architecture"

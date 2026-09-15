@@ -21,10 +21,18 @@ typedef struct {
 } MicContext;
 
 typedef NS_ENUM(NSInteger, DeliveryMode) {
+    DeliveryModeNone = -1,
     DeliveryModeHID = 0,
     DeliveryModePID,
     DeliveryModeAX,
 };
+
+typedef struct {
+    int code;
+    DeliveryMode successfulDeliveryMode;
+    BOOL usedFocusFallback;
+    BOOL unverified;
+} ToggleRunResult;
 
 typedef NS_ENUM(NSInteger, ShortcutRecorderTarget) {
     ShortcutRecorderTargetNone = 0,
@@ -36,6 +44,12 @@ typedef NS_ENUM(NSInteger, ToggleInvocationSource) {
     ToggleInvocationSourceHotKey = 0,
     ToggleInvocationSourceMenu,
     ToggleInvocationSourceTest,
+};
+
+typedef NS_ENUM(NSInteger, UpdateCheckSource) {
+    UpdateCheckSourceAutomatic = 0,
+    UpdateCheckSourceSettings,
+    UpdateCheckSourceMenu,
 };
 
 static BOOL gLoggingEnabled = NO;
@@ -55,7 +69,7 @@ static NSString *const kLastUpdateCheckPreference = @"LastUpdateCheck";
 static NSString *const kShareAnonymousUsageDataPreference = @"ShareAnonymousUsageData";
 static NSString *const kTelemetryConsentPresentedPreference = @"TelemetryConsentPresented";
 static NSString *const kTelemetryInstallationIDPreference = @"TelemetryInstallationID";
-static NSString *const kTelemetryInstallSentPreference = @"TelemetryInstallSent";
+static NSString *const kTelemetryActivationSentPreference = @"TelemetryInstallSent";
 static NSString *const kTelemetryLastUploadPreference = @"TelemetryLastUpload";
 static NSString *const kTelemetryHotKeyCountPreference = @"TelemetryHotKeyCount";
 static NSString *const kTelemetryMenuCountPreference = @"TelemetryMenuCount";
@@ -63,6 +77,7 @@ static NSString *const kTelemetryTestCountPreference = @"TelemetryTestCount";
 static NSString *const kTelemetryVerifiedCountPreference = @"TelemetryVerifiedCount";
 static NSString *const kTelemetryUnverifiedCountPreference = @"TelemetryUnverifiedCount";
 static NSString *const kTelemetryFailedCountPreference = @"TelemetryFailedCount";
+static NSString *const kTelemetryAggregateCountsPreference = @"TelemetryAggregateCountsV2";
 static NSString *const kRepositoryURL = @"https://github.com/m-rk/ms-teams-mute-shortcut";
 static NSString *const kTelemetryAppID = @"31EEC49F-EF02-4571-BA72-49928A84CC26";
 static NSString *const kTelemetryNamespace = @"gl.tan";
@@ -143,6 +158,11 @@ static NSString *CurrentVersion(void) {
     return version.length > 0 ? version : @"Unknown";
 }
 
+static NSString *CurrentBuildNumber(void) {
+    NSString *build = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleVersion"];
+    return build.length > 0 ? build : @"Unknown";
+}
+
 static NSString *CurrentArchitecture(void) {
 #if defined(__arm64__)
     return @"arm64";
@@ -151,6 +171,36 @@ static NSString *CurrentArchitecture(void) {
 #else
     return @"unknown";
 #endif
+}
+
+static NSString *DistributionChannel(void) {
+    if (!IsInApplicationsFolder()) {
+        return @"source";
+    }
+
+    NSString *version = CurrentVersion();
+    NSArray<NSString *> *caskRoots = @[
+        @"/opt/homebrew/Caskroom/teams-mute-helper",
+        @"/usr/local/Caskroom/teams-mute-helper",
+    ];
+    NSFileManager *files = NSFileManager.defaultManager;
+    for (NSString *root in caskRoots) {
+        NSString *caskApp = [[root stringByAppendingPathComponent:version]
+            stringByAppendingPathComponent:@"Teams Mute Helper.app"];
+        if ([files fileExistsAtPath:caskApp]) {
+            return @"homebrew";
+        }
+    }
+    return @"direct";
+}
+
+static BOOL TelemetryUsesTestMode(void) {
+    if ([NSProcessInfo.processInfo.environment[@"TEAMS_MUTE_TELEMETRY_TEST_MODE"] boolValue]) {
+        return YES;
+    }
+    NSNumber *productionBuild = [NSBundle.mainBundle
+        objectForInfoDictionaryKey:@"TelemetryProductionBuild"];
+    return productionBuild == nil || !productionBuild.boolValue;
 }
 
 static NSString *SHA256Hex(NSString *value) {
@@ -660,9 +710,54 @@ static void SendAXShortcut(pid_t teamsPID, UInt32 keyCode, UInt32 modifiers) {
 
 static NSString *DeliveryModeName(DeliveryMode mode) {
     switch (mode) {
+        case DeliveryModeNone: return @"none";
         case DeliveryModeHID: return @"hid";
         case DeliveryModePID: return @"pid";
         case DeliveryModeAX: return @"ax";
+    }
+}
+
+static ToggleRunResult MakeToggleRunResult(int code,
+                                            DeliveryMode successfulDeliveryMode,
+                                            BOOL usedFocusFallback) {
+    ToggleRunResult result = {
+        .code = code,
+        .successfulDeliveryMode = successfulDeliveryMode,
+        .usedFocusFallback = usedFocusFallback,
+        .unverified = NO,
+    };
+    return result;
+}
+
+static NSString *ToggleInvocationSourceName(ToggleInvocationSource source) {
+    switch (source) {
+        case ToggleInvocationSourceHotKey: return @"hotkey";
+        case ToggleInvocationSourceMenu: return @"menu";
+        case ToggleInvocationSourceTest: return @"test";
+    }
+}
+
+static NSString *UpdateCheckSourceName(UpdateCheckSource source) {
+    switch (source) {
+        case UpdateCheckSourceAutomatic: return @"automatic";
+        case UpdateCheckSourceSettings: return @"settings";
+        case UpdateCheckSourceMenu: return @"menu";
+    }
+}
+
+static NSString *ToggleFailureReason(ToggleRunResult result) {
+    if (result.unverified) {
+        return @"mic_state_unavailable";
+    }
+    switch (result.code) {
+        case 0: return @"none";
+        case 2: return @"accessibility_permission_missing";
+        case 3: return @"teams_not_running";
+        case 4: return @"meeting_not_found";
+        case 5: return @"mic_state_did_not_change";
+        case 6: return @"mic_state_unavailable";
+        case 7: return @"another_instance_running";
+        default: return @"internal_error";
     }
 }
 
@@ -703,18 +798,18 @@ static BOOL SendAndVerify(DeliveryMode mode,
     return changed;
 }
 
-static int RunHelper(BOOL diagnoseOnly, BOOL reportUnverified) {
+static ToggleRunResult RunHelper(BOOL diagnoseOnly, BOOL reportUnverified) {
     BOOL trusted = AXIsProcessTrusted();
     WriteLog(@"Start native helper trusted=%@ diagnose=%@", trusted ? @"yes" : @"no", diagnoseOnly ? @"yes" : @"no");
     if (!trusted) {
         WriteLog(@"Accessibility permission is not active");
-        return 2;
+        return MakeToggleRunResult(2, DeliveryModeNone, NO);
     }
 
     NSRunningApplication *teams = [[NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.microsoft.teams2"] firstObject];
     if (teams == nil || teams.terminated) {
         WriteLog(@"Microsoft Teams is not running");
-        return 3;
+        return MakeToggleRunResult(3, DeliveryModeNone, NO);
     }
 
     UInt32 teamsShortcutKeyCode = 0;
@@ -734,10 +829,11 @@ static int RunHelper(BOOL diagnoseOnly, BOOL reportUnverified) {
         BOOL foundState = before.state != MicStateUnknown;
         WriteLog(@"Diagnostic complete state=%@", MicStateName(before.state));
         ReleaseMicContext(&before);
-        return foundState ? 0 : 4;
+        return MakeToggleRunResult(foundState ? 0 : 4, DeliveryModeNone, NO);
     }
     BOOL changed = NO;
     BOOL unverified = before.state == MicStateUnknown;
+    DeliveryMode successfulDeliveryMode = DeliveryModeNone;
     if (before.state == MicStateUnknown) {
         SendCGShortcut(DeliveryModePID,
                        teams.processIdentifier,
@@ -750,12 +846,18 @@ static int RunHelper(BOOL diagnoseOnly, BOOL reportUnverified) {
                                 before.state,
                                 teamsShortcutKeyCode,
                                 teamsShortcutModifiers);
+        if (changed) {
+            successfulDeliveryMode = DeliveryModePID;
+        }
         if (!changed) {
             changed = SendAndVerify(DeliveryModeAX,
                                     teams,
                                     before.state,
                                     teamsShortcutKeyCode,
                                     teamsShortcutModifiers);
+            if (changed) {
+                successfulDeliveryMode = DeliveryModeAX;
+            }
         }
     }
 
@@ -785,12 +887,18 @@ static int RunHelper(BOOL diagnoseOnly, BOOL reportUnverified) {
                                 before.state,
                                 teamsShortcutKeyCode,
                                 teamsShortcutModifiers);
+        if (changed) {
+            successfulDeliveryMode = DeliveryModeHID;
+        }
         if (!changed) {
             changed = SendAndVerify(DeliveryModePID,
                                     teams,
                                     before.state,
                                     teamsShortcutKeyCode,
                                     teamsShortcutModifiers);
+            if (changed) {
+                successfulDeliveryMode = DeliveryModePID;
+            }
         }
         if (!changed) {
             changed = SendAndVerify(DeliveryModeAX,
@@ -798,6 +906,9 @@ static int RunHelper(BOOL diagnoseOnly, BOOL reportUnverified) {
                                     before.state,
                                     teamsShortcutKeyCode,
                                     teamsShortcutModifiers);
+            if (changed) {
+                successfulDeliveryMode = DeliveryModeAX;
+            }
         }
     }
 
@@ -813,12 +924,16 @@ static int RunHelper(BOOL diagnoseOnly, BOOL reportUnverified) {
              changed ? @"yes" : @"no", activatedTeams ? @"yes" : @"no");
     ReleaseMicContext(&before);
     if (changed) {
-        return 0;
+        return MakeToggleRunResult(0, successfulDeliveryMode, activatedTeams);
     }
     if (unverified) {
-        return reportUnverified ? 6 : 0;
+        ToggleRunResult result = MakeToggleRunResult(reportUnverified ? 6 : 0,
+                                                      DeliveryModePID,
+                                                      NO);
+        result.unverified = YES;
+        return result;
     }
-    return 5;
+    return MakeToggleRunResult(5, DeliveryModeNone, activatedTeams);
 }
 
 static int TestGlobalHotKey(void) {
@@ -855,17 +970,17 @@ static int TestGlobalHotKey(void) {
     return changed ? 0 : 5;
 }
 
-static int RunLockedHelper(BOOL diagnoseOnly, BOOL reportUnverified) {
+static ToggleRunResult RunLockedHelper(BOOL diagnoseOnly, BOOL reportUnverified) {
     int lockFile = open("/tmp/io.github.m-rk.ms-teams-mute-helper.lock", O_CREAT | O_RDWR, 0600);
     if (lockFile < 0 || flock(lockFile, LOCK_EX | LOCK_NB) != 0) {
         WriteLog(@"Another helper instance is already running");
         if (lockFile >= 0) {
             close(lockFile);
         }
-        return 0;
+        return MakeToggleRunResult(7, DeliveryModeNone, NO);
     }
 
-    int result = RunHelper(diagnoseOnly, reportUnverified);
+    ToggleRunResult result = RunHelper(diagnoseOnly, reportUnverified);
     flock(lockFile, LOCK_UN);
     close(lockFile);
     return result;
@@ -988,10 +1103,23 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
 
 - (NSDictionary *)commonTelemetryPayload {
     NSOperatingSystemVersion systemVersion = NSProcessInfo.processInfo.operatingSystemVersion;
+    NSString *osMajorVersion = [NSString stringWithFormat:@"%ld", (long)systemVersion.majorVersion];
+    NSString *distributionChannel = DistributionChannel();
     return @{
         @"Helper.appVersion": CurrentVersion(),
         @"Helper.osMajorVersion": @(systemVersion.majorVersion),
         @"Helper.architecture": CurrentArchitecture(),
+        @"Helper.distributionChannel": distributionChannel,
+        @"TelemetryDeck.AppInfo.version": CurrentVersion(),
+        @"TelemetryDeck.AppInfo.buildNumber": CurrentBuildNumber(),
+        @"TelemetryDeck.AppInfo.versionAndBuildNumber": [NSString stringWithFormat:@"%@ %@",
+                                                           CurrentVersion(),
+                                                           CurrentBuildNumber()],
+        @"TelemetryDeck.Device.architecture": CurrentArchitecture(),
+        @"TelemetryDeck.Device.operatingSystem": @"macOS",
+        @"TelemetryDeck.Device.platform": @"macOS",
+        @"TelemetryDeck.Device.systemMajorVersion": osMajorVersion,
+        @"TelemetryDeck.RunContext.sourceMarketplace": distributionChannel,
     };
 }
 
@@ -1004,37 +1132,68 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
         kTelemetryVerifiedCountPreference,
         kTelemetryUnverifiedCountPreference,
         kTelemetryFailedCountPreference,
+        kTelemetryAggregateCountsPreference,
     ]) {
         [defaults removeObjectForKey:key];
     }
 }
 
-- (void)incrementTelemetryCounter:(NSString *)key {
+- (void)incrementTelemetryAggregateType:(NSString *)type payload:(NSDictionary *)payload {
     if (![self telemetryIsEnabled]) {
         return;
     }
+
+    NSDictionary *record = @{
+        @"type": type,
+        @"payload": payload ?: @{},
+    };
+    NSError *jsonError = nil;
+    NSData *recordData = [NSJSONSerialization dataWithJSONObject:record
+                                                         options:NSJSONWritingSortedKeys
+                                                           error:&jsonError];
+    if (recordData == nil) {
+        WriteLog(@"Could not aggregate anonymous usage data error=%@",
+                 jsonError.localizedDescription);
+        return;
+    }
+    NSString *recordKey = [[NSString alloc] initWithData:recordData
+                                                encoding:NSUTF8StringEncoding];
+    if (recordKey.length == 0) {
+        return;
+    }
+
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    [defaults setInteger:[defaults integerForKey:key] + 1 forKey:key];
+    NSMutableDictionary<NSString *, NSNumber *> *counts =
+        [[defaults dictionaryForKey:kTelemetryAggregateCountsPreference] mutableCopy];
+    if (counts == nil) {
+        counts = [NSMutableDictionary dictionary];
+    }
+    counts[recordKey] = @(counts[recordKey].integerValue + 1);
+    [defaults setObject:counts forKey:kTelemetryAggregateCountsPreference];
 }
 
 - (void)recordTelemetryAttemptFromSource:(ToggleInvocationSource)source {
-    NSString *key = kTelemetryHotKeyCountPreference;
-    if (source == ToggleInvocationSourceMenu) {
-        key = kTelemetryMenuCountPreference;
-    } else if (source == ToggleInvocationSourceTest) {
-        key = kTelemetryTestCountPreference;
-    }
-    [self incrementTelemetryCounter:key];
+    [self incrementTelemetryAggregateType:@"Usage.Toggle.attempted"
+                                  payload:@{
+        @"Helper.invocationSource": ToggleInvocationSourceName(source),
+    }];
 }
 
-- (void)recordTelemetryResult:(int)result {
-    NSString *key = kTelemetryFailedCountPreference;
-    if (result == 0) {
-        key = kTelemetryVerifiedCountPreference;
-    } else if (result == 6) {
-        key = kTelemetryUnverifiedCountPreference;
+- (void)recordTelemetryResult:(ToggleRunResult)result source:(ToggleInvocationSource)source {
+    NSString *outcome = @"failed";
+    if (result.unverified || result.code == 6) {
+        outcome = @"unverified";
+    } else if (result.code == 0) {
+        outcome = @"verified";
     }
-    [self incrementTelemetryCounter:key];
+    [self incrementTelemetryAggregateType:@"Usage.Toggle.completed"
+                                  payload:@{
+        @"Helper.invocationSource": ToggleInvocationSourceName(source),
+        @"Helper.outcome": outcome,
+        @"Helper.failureReason": ToggleFailureReason(result),
+        @"Helper.deliveryMode": DeliveryModeName(result.successfulDeliveryMode),
+        @"Helper.usedFocusFallback": @(result.usedFocusFallback),
+    }];
 }
 
 - (NSDictionary *)telemetrySignalWithType:(NSString *)type
@@ -1051,7 +1210,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     if (count != nil) {
         signal[@"floatValue"] = count;
     }
-    if ([NSProcessInfo.processInfo.environment[@"TEAMS_MUTE_TELEMETRY_TEST_MODE"] boolValue]) {
+    if (TelemetryUsesTestMode()) {
         signal[@"isTestMode"] = @YES;
     }
     return signal;
@@ -1094,15 +1253,17 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     for (NSString *key in counterKeys) {
         snapshot[key] = @([defaults integerForKey:key]);
     }
+    NSDictionary<NSString *, NSNumber *> *aggregateSnapshot =
+        [[defaults dictionaryForKey:kTelemetryAggregateCountsPreference] copy] ?: @{};
 
     NSMutableArray<NSDictionary *> *signals = [NSMutableArray array];
-    BOOL includesInstall = ![defaults boolForKey:kTelemetryInstallSentPreference];
-    if (includesInstall) {
-        [signals addObject:[self telemetrySignalWithType:@"App.installActivated"
+    BOOL includesActivation = ![defaults boolForKey:kTelemetryActivationSentPreference];
+    if (includesActivation) {
+        [signals addObject:[self telemetrySignalWithType:@"App.telemetryActivated"
                                                 payload:nil
                                                   count:nil]];
     }
-    [signals addObject:[self telemetrySignalWithType:@"App.dailyActive"
+    [signals addObject:[self telemetrySignalWithType:@"App.helperRunningDaily"
                                             payload:nil
                                               count:nil]];
 
@@ -1132,6 +1293,27 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
                                                     payload:@{@"Helper.outcome": outcome[@"outcome"]}
                                                       count:count]];
         }
+    }
+
+    for (NSString *recordKey in aggregateSnapshot) {
+        NSNumber *count = aggregateSnapshot[recordKey];
+        if (![count isKindOfClass:NSNumber.class] || count.integerValue <= 0) {
+            continue;
+        }
+        NSData *recordData = [recordKey dataUsingEncoding:NSUTF8StringEncoding];
+        NSError *recordError = nil;
+        NSDictionary *record = [NSJSONSerialization JSONObjectWithData:recordData
+                                                                options:0
+                                                                  error:&recordError];
+        NSString *type = [record isKindOfClass:NSDictionary.class] ? record[@"type"] : nil;
+        NSDictionary *payload = [record isKindOfClass:NSDictionary.class] ? record[@"payload"] : nil;
+        if (![type isKindOfClass:NSString.class] ||
+            ![payload isKindOfClass:NSDictionary.class] || recordError != nil) {
+            WriteLog(@"Ignored invalid anonymous usage aggregate error=%@",
+                     recordError.localizedDescription ?: @"invalid record");
+            continue;
+        }
+        [signals addObject:[self telemetrySignalWithType:type payload:payload count:count]];
     }
 
     NSError *jsonError = nil;
@@ -1174,14 +1356,31 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
             }
 
             NSUserDefaults *currentDefaults = [NSUserDefaults standardUserDefaults];
-            if (includesInstall) {
-                [currentDefaults setBool:YES forKey:kTelemetryInstallSentPreference];
+            if (includesActivation) {
+                [currentDefaults setBool:YES forKey:kTelemetryActivationSentPreference];
             }
             for (NSString *key in counterKeys) {
                 NSInteger remaining = MAX(0,
                     [currentDefaults integerForKey:key] - snapshot[key].integerValue);
                 [currentDefaults setInteger:remaining forKey:key];
             }
+            NSMutableDictionary<NSString *, NSNumber *> *remainingAggregates =
+                [[currentDefaults dictionaryForKey:kTelemetryAggregateCountsPreference] mutableCopy];
+            if (remainingAggregates == nil) {
+                remainingAggregates = [NSMutableDictionary dictionary];
+            }
+            for (NSString *recordKey in aggregateSnapshot) {
+                NSInteger remaining = MAX(0,
+                    remainingAggregates[recordKey].integerValue -
+                    aggregateSnapshot[recordKey].integerValue);
+                if (remaining == 0) {
+                    [remainingAggregates removeObjectForKey:recordKey];
+                } else {
+                    remainingAggregates[recordKey] = @(remaining);
+                }
+            }
+            [currentDefaults setObject:remainingAggregates
+                                 forKey:kTelemetryAggregateCountsPreference];
             [currentDefaults setObject:[NSDate date] forKey:kTelemetryLastUploadPreference];
             WriteLog(@"Anonymous usage upload accepted signals=%lu", (unsigned long)signals.count);
             [self scheduleTelemetryUpload];
@@ -1226,24 +1425,24 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     }
     [self setStatusSymbol:@"mic.badge.plus" description:@"Toggling Teams mute…"];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        int result = RunLockedHelper(NO, showSettingsFeedback);
+        ToggleRunResult result = RunLockedHelper(NO, showSettingsFeedback);
         dispatch_async(dispatch_get_main_queue(), ^{
             self->_toggleInProgress = NO;
-            [self recordTelemetryResult:result];
-            [self showResult:result];
+            [self recordTelemetryResult:result source:source];
+            [self showResult:result.code];
             if (showSettingsFeedback) {
                 NSString *message = @"The shortcut was sent, but the mic state did not change.";
                 NSColor *color = NSColor.systemRedColor;
-                if (result == 0) {
+                if (result.code == 0) {
                     message = @"Worked — the Teams mic state changed.";
                     color = NSColor.systemGreenColor;
-                } else if (result == 2) {
+                } else if (result.code == 2) {
                     message = @"Accessibility access is required before this can be tested.";
-                } else if (result == 3) {
+                } else if (result.code == 3) {
                     message = @"Microsoft Teams is not running.";
-                } else if (result == 4) {
+                } else if (result.code == 4) {
                     message = @"No active Teams meeting was found.";
-                } else if (result == 6) {
+                } else if (result.code == 6) {
                     message = @"Shortcut sent — check Teams to confirm.";
                     color = NSColor.secondaryLabelColor;
                 }
@@ -1804,24 +2003,31 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
 - (void)checkForUpdates:(id)sender {
     (void)sender;
     if (_availableUpdateURL != nil) {
-        [[NSWorkspace sharedWorkspace] openURL:_availableUpdateURL];
+        BOOL opened = [[NSWorkspace sharedWorkspace] openURL:_availableUpdateURL];
+        if (opened) {
+            [self incrementTelemetryAggregateType:@"Update.Release.opened"
+                                          payload:@{@"Update.source": @"settings"}];
+        }
         return;
     }
-    [self performUpdateCheckUserInitiated:YES];
+    [self performUpdateCheckFromSource:UpdateCheckSourceSettings];
 }
 
 - (void)checkForUpdatesFromMenu:(id)sender {
     (void)sender;
     if (_availableUpdateURL != nil) {
-        [[NSWorkspace sharedWorkspace] openURL:_availableUpdateURL];
+        BOOL opened = [[NSWorkspace sharedWorkspace] openURL:_availableUpdateURL];
+        if (opened) {
+            [self incrementTelemetryAggregateType:@"Update.Release.opened"
+                                          payload:@{@"Update.source": @"menu"}];
+        }
         return;
     }
     [self showSettingsWindowForOnboarding:NO];
-    [self performUpdateCheckUserInitiated:YES];
+    [self performUpdateCheckFromSource:UpdateCheckSourceMenu];
 }
 
-- (void)performUpdateCheckUserInitiated:(BOOL)userInitiated {
-    (void)userInitiated;
+- (void)performUpdateCheckFromSource:(UpdateCheckSource)source {
     if (_updateCheckInProgress) {
         return;
     }
@@ -1840,16 +2046,20 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
         NSString *candidateVersion = nil;
         NSURL *releaseURL = nil;
         NSString *failure = nil;
+        NSString *failureReason = nil;
         NSHTTPURLResponse *http = (NSHTTPURLResponse *)response;
         if (error != nil) {
             failure = error.localizedDescription;
+            failureReason = @"network_error";
         } else if (![http isKindOfClass:NSHTTPURLResponse.class] || http.statusCode != 200) {
             failure = @"GitHub did not return a release.";
+            failureReason = @"http_error";
         } else {
             NSError *jsonError = nil;
             NSDictionary *release = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
             if (![release isKindOfClass:NSDictionary.class] || jsonError != nil) {
                 failure = @"The release response could not be read.";
+                failureReason = @"invalid_response";
             } else {
                 NSString *tag = release[@"tag_name"];
                 NSString *page = release[@"html_url"];
@@ -1858,6 +2068,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
                 }
                 if (tag.length == 0 || page.length == 0) {
                     failure = @"The latest release did not include version information.";
+                    failureReason = @"incomplete_release";
                 } else {
                     candidateVersion = tag;
                     releaseURL = [NSURL URLWithString:page];
@@ -1869,10 +2080,13 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
             self->_updateCheckInProgress = NO;
             [[NSUserDefaults standardUserDefaults] setObject:[NSDate date]
                                                        forKey:kLastUpdateCheckPreference];
+            NSString *telemetryResult = @"up_to_date";
             if (failure != nil) {
+                telemetryResult = @"failed";
                 self->_updateStatusLabel.stringValue = [NSString stringWithFormat:@"Couldn’t check for updates: %@", failure];
                 self->_updateStatusLabel.textColor = NSColor.systemRedColor;
             } else if (VersionIsNewer(candidateVersion, CurrentVersion())) {
+                telemetryResult = @"update_available";
                 self->_availableUpdateURL = releaseURL;
                 self->_updateStatusLabel.stringValue = [NSString stringWithFormat:@"Version %@ is available.", candidateVersion];
                 self->_updateStatusLabel.textColor = NSColor.systemBlueColor;
@@ -1883,6 +2097,15 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
                 self->_updateStatusLabel.textColor = NSColor.secondaryLabelColor;
                 self->_updateMenuItem.title = @"Check for Updates…";
             }
+            NSMutableDictionary *telemetryPayload = [@{
+                @"Update.source": UpdateCheckSourceName(source),
+                @"Update.result": telemetryResult,
+            } mutableCopy];
+            if (failureReason != nil) {
+                telemetryPayload[@"Update.failureReason"] = failureReason;
+            }
+            [self incrementTelemetryAggregateType:@"Update.Check.completed"
+                                          payload:telemetryPayload];
             self->_checkUpdatesButton.enabled = YES;
             self->_checkUpdatesButton.title = self->_availableUpdateURL != nil
                 ? @"View Update…"
@@ -1910,7 +2133,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
         self->_automaticUpdateCheckScheduled = NO;
         NSUserDefaults *currentDefaults = [NSUserDefaults standardUserDefaults];
         if ([currentDefaults boolForKey:kAutomaticUpdateChecksPreference]) {
-            [self performUpdateCheckUserInitiated:NO];
+            [self performUpdateCheckFromSource:UpdateCheckSourceAutomatic];
         }
     });
 }
@@ -2229,6 +2452,6 @@ int main(int argc, const char *argv[]) {
             return 0;
         }
 
-        return RunLockedHelper(diagnoseOnly, NO);
+        return RunLockedHelper(diagnoseOnly, NO).code;
     }
 }

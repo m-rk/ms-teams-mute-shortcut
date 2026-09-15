@@ -78,7 +78,7 @@ Your shortcuts and other settings are preserved. If you installed from GitHub Re
 
 **Share anonymous usage data** is checked on first launch. Nothing is sent until you close the onboarding window, giving you a chance to turn it off first. The setting remains available in Settings and can be changed at any time.
 
-When enabled, the helper sends an anonymous installation event and daily aggregate usage totals to TelemetryDeck. See [Privacy](#privacy) for the exact data included.
+When enabled, the helper sends a telemetry-enabled activation event and daily aggregate usage and update-health totals to TelemetryDeck. See [Privacy](#privacy) for the exact data included.
 
 ### 6. Try it
 
@@ -185,6 +185,7 @@ You can then remove the helper's entry from Accessibility settings.
 - [`build-app.sh`](build-app.sh): builds a universal app and applies either an ad-hoc or supplied Developer ID signature.
 - [`install-helper.sh`](install-helper.sh): builds, installs, starts, and removes the source-built helper.
 - [`scripts/release.sh`](scripts/release.sh): creates, notarizes, staples, verifies, and optionally publishes an official release.
+- [`scripts/test.sh`](scripts/test.sh): runs offline telemetry regression checks and builds the universal app.
 - [`RELEASING.md`](RELEASING.md): documents the maintainer-only signed release process.
 - [`assets/app-icon.svg`](assets/app-icon.svg), [`assets/app-icon.png`](assets/app-icon.png), and [`assets/AppIcon.icns`](assets/AppIcon.icns): vector source, README image, and macOS bundle icon; regenerate the derived assets with [`scripts/build-icons.sh`](scripts/build-icons.sh).
 - [`assets/menu-bar-icon.svg`](assets/menu-bar-icon.svg) and [`assets/menu-bar-icon.png`](assets/menu-bar-icon.png): monochrome source and bundled macOS template icon.
@@ -192,6 +193,7 @@ You can then remove the helper's entry from Accessibility settings.
 - [`assets/settings.jpg`](assets/settings.jpg): README screenshot of the Settings window.
 - [`TeamsMuteHelper.m`](TeamsMuteHelper.m): owns both shortcut settings, update checks, anonymous usage reporting, the global listener, Teams delivery, and state verification.
 - [`TeamsMuteHelper-Info.plist`](TeamsMuteHelper-Info.plist): defines the native background app bundle.
+- [`tests/TelemetryTests.m`](tests/TelemetryTests.m): verifies telemetry aggregation, classifications, metadata, and test-mode behavior without uploading data.
 - [`toggle-teams-mute.applescript`](toggle-teams-mute.applescript): optional compatibility launcher for Shortcuts.
 
 > [!IMPORTANT]
@@ -212,15 +214,17 @@ The helper does not access audio or files. Accessibility permission is used to s
 
 When sharing is enabled, the helper sends the following to [TelemetryDeck](https://telemetrydeck.com/):
 
-- one activation event to estimate installations;
-- one daily active event;
-- daily totals for toggles started from the global shortcut, menu, and Test button;
-- daily totals for verified, unverified, and failed outcomes; and
-- the helper version, Mac architecture, and macOS major version.
+- one activation event when telemetry is first enabled;
+- one daily event indicating that the menu-bar helper is running;
+- daily toggle totals grouped by global shortcut, menu, or Test button; verified, unverified, or failed outcome; coarse failure reason; successful delivery method; and whether the focus fallback was needed;
+- daily update-check totals grouped by automatic, Settings, or menu source and by up-to-date, update-available, or failed result, plus successful opens of the release page; and
+- the helper version and build, Mac architecture, macOS major version, and Homebrew, direct-download, or source-build distribution channel.
+
+Failure reasons are fixed categories such as Accessibility permission missing, Teams not running, microphone state unavailable, or microphone state unchanged. The helper never sends the underlying diagnostic or network error text.
 
 The helper creates a random installation identifier locally and sends only its SHA-256 hash. It never sends your configured shortcuts, meeting or account details, participant information, microphone state history, audio, filenames, foreground apps, locale, location, or diagnostic error text. TelemetryDeck [states that it does not store IP addresses](https://telemetrydeck.com/docs/guides/privacy-faq/).
 
-Usage totals are stored locally until the next successful daily upload, then cleared. Uploads use an ephemeral network session, run asynchronously, fail silently, and never delay a mute action.
+Totals are stored locally until the next successful daily upload, then cleared. Their timestamps therefore describe the aggregate upload, not individual mute actions or update checks. Uploads use an ephemeral network session, run asynchronously, fail silently, and never delay a mute action. Ad hoc-signed source builds are automatically marked as TelemetryDeck test traffic.
 
 When automatic update checks are enabled, or **Check for Updates…** is selected, the helper requests public release metadata from GitHub. The request contains no meeting, microphone, Teams, or shortcut data. Automatic checks can be disabled in Settings.
 
