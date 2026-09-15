@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Teams Mute Helper pressed menu bar icon</title>
+  <desc id="description">A pressed monochrome split keyboard key showing unmuted and muted microphone symbols.</desc>
+  <defs>
+    <clipPath id="face-shape">
+      <rect x="24" width="976" height="950" rx="200"/>
+    </clipPath>
+    <mask id="bezel-shape">
+      <rect width="1024" height="1024" fill="black"/>
+      <rect y="38" width="1024" height="986" rx="214" fill="white"/>
+      <rect x="24" width="976" height="950" rx="200" fill="black"/>
+    </mask>
+    <mask id="muted-symbol-cutout">
+      <rect width="1024" height="1024" fill="white"/>
+      <g transform="translate(0 61)" fill="none" stroke="black" stroke-linecap="round" stroke-linejoin="round" stroke-width="42">
+        <rect x="680" y="194" width="130" height="250" rx="65"/>
+        <path d="M630 348v29c0 86 50 139 115 139s115-53 115-139v-29"/>
+        <path d="M745 516v70M692 586h106"/>
+        <path d="M638 222l216 268" stroke-width="54"/>
+      </g>
+    </mask>
+  </defs>
+
+  <rect width="1024" height="1024" fill="black" opacity="0.6" mask="url(#bezel-shape)"/>
+  <g clip-path="url(#face-shape)">
+    <rect x="512" width="512" height="950" fill="black" mask="url(#muted-symbol-cutout)"/>
+  </g>
+  <rect x="30" y="6" width="964" height="938" rx="194" fill="none" stroke="black" stroke-width="18"/>
+
+  <g transform="translate(0 61)" fill="black" stroke="black" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="214" y="194" width="130" height="266" rx="65" stroke="none"/>
+    <path d="M164 348v29c0 86 50 139 115 139s115-53 115-139v-29" fill="none" stroke-width="42"/>
+    <path d="M279 516v70M226 586h106" fill="none" stroke-width="42"/>
+  </g>
+</svg>

@@ -26,6 +26,8 @@ test_binary="${test_dir}/TelemetryTests"
 
 test "$(/usr/libexec/PlistBuddy -c 'Print :TelemetryProductionBuild' \
 	"${repo_dir}/build/Teams Mute Helper.app/Contents/Info.plist")" = "false"
+test -f "${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIcon.svg"
+test -f "${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIconPressed.svg"
 /usr/bin/lipo "${repo_dir}/build/Teams Mute Helper.app/Contents/MacOS/TeamsMuteHelper" \
 	-verify_arch arm64 x86_64
 

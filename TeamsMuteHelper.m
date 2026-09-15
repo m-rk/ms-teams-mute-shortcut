@@ -1022,6 +1022,20 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
     _statusItem.button.toolTip = description;
 }
 
+- (BOOL)setTemplateIconNamed:(NSString *)resourceName description:(NSString *)description {
+    NSString *imagePath = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"svg"];
+    NSImage *image = imagePath != nil ? [[NSImage alloc] initWithContentsOfFile:imagePath] : nil;
+    if (image == nil) {
+        return NO;
+    }
+
+    image.size = NSMakeSize(18, 18);
+    image.template = YES;
+    _statusItem.button.image = image;
+    _statusItem.button.toolTip = description;
+    return YES;
+}
+
 - (NSString *)shortcutDisplayString {
     return HotKeyDisplayString(_hotKeyModifiers, _hotKeyLabel);
 }
@@ -1033,17 +1047,16 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
 - (void)showReadyStatus {
     NSString *description = [NSString stringWithFormat:@"Teams Mute Helper %@ — %@",
                               CurrentVersion(), [self shortcutDisplayString]];
-    NSString *imagePath = [[NSBundle mainBundle] pathForResource:@"MenuBarIcon" ofType:@"png"];
-    NSImage *image = imagePath != nil ? [[NSImage alloc] initWithContentsOfFile:imagePath] : nil;
-    if (image == nil) {
+    if (![self setTemplateIconNamed:@"MenuBarIcon" description:description]) {
         [self setStatusSymbol:@"mic.slash" description:description];
-        return;
     }
+}
 
-    image.size = NSMakeSize(18, 18);
-    image.template = YES;
-    _statusItem.button.image = image;
-    _statusItem.button.toolTip = description;
+- (void)showPressedStatus {
+    NSString *description = @"Toggling Teams mute…";
+    if (![self setTemplateIconNamed:@"MenuBarIconPressed" description:description]) {
+        [self setStatusSymbol:@"mic.badge.plus" description:description];
+    }
 }
 
 - (void)showIdleStatus {
@@ -1423,7 +1436,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
         _recordingHint.textColor = NSColor.secondaryLabelColor;
         _testTeamsShortcutButton.enabled = NO;
     }
-    [self setStatusSymbol:@"mic.badge.plus" description:@"Toggling Teams mute…"];
+    [self showPressedStatus];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         ToggleRunResult result = RunLockedHelper(NO, showSettingsFeedback);
         dispatch_async(dispatch_get_main_queue(), ^{

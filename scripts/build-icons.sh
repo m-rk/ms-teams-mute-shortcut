@@ -29,7 +29,13 @@ done
 	"${repo_dir}/scripts/render-template-icon.swift" \
 	"${assets_dir}/menu-bar-icon.svg" \
 	"${assets_dir}/menu-bar-icon.png" \
-	128
+	1024
+/usr/bin/xcrun swift \
+	-module-cache-path "${temporary_dir}/swift-module-cache" \
+	"${repo_dir}/scripts/render-template-icon.swift" \
+	"${assets_dir}/menu-bar-icon-pressed.svg" \
+	"${assets_dir}/menu-bar-icon-pressed.png" \
+	1024
 
 for specification in \
 	"16 icon_16x16.png" \
@@ -51,4 +57,4 @@ do
 done
 
 /usr/bin/iconutil -c icns "$iconset_dir" -o "${assets_dir}/AppIcon.icns"
-/usr/bin/printf 'Updated app-icon.png, menu-bar-icon.png, and AppIcon.icns.\n'
+/usr/bin/printf 'Updated app and menu-bar icon assets.\n'

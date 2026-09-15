@@ -34,6 +34,9 @@ guard let image = NSImage(contentsOf: inputURL),
 bitmap.size = NSSize(width: size, height: size)
 NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = context
+context.imageInterpolation = .high
+context.cgContext.setAllowsAntialiasing(true)
+context.cgContext.setShouldAntialias(true)
 context.cgContext.clear(CGRect(x: 0, y: 0, width: size, height: size))
 image.draw(
     in: NSRect(x: 0, y: 0, width: size, height: size),
