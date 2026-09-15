@@ -194,6 +194,9 @@ You can then remove the helper's entry from Accessibility settings.
 - [`TeamsMuteHelper-Info.plist`](TeamsMuteHelper-Info.plist): defines the native background app bundle.
 - [`toggle-teams-mute.applescript`](toggle-teams-mute.applescript): optional compatibility launcher for Shortcuts.
 
+> [!IMPORTANT]
+> Always regenerate icons with `./scripts/build-icons.sh`. Do not rasterize the menu-bar SVG with Quick Look: it replaces transparency with opaque white, which macOS renders as a solid template icon. The generator preserves and validates the transparent canvas.
+
 ## Limitations
 
 - Teams must be running with a meeting or call open.

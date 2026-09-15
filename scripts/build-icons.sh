@@ -13,7 +13,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-for command in qlmanage sips iconutil; do
+for command in qlmanage sips iconutil xcrun; do
 	if ! command -v "$command" >/dev/null 2>&1; then
 		/usr/bin/printf 'Required command not found: %s\n' "$command" >&2
 		exit 1
@@ -23,9 +23,13 @@ done
 /bin/mkdir -p "$iconset_dir" "$rendered_dir"
 
 /usr/bin/qlmanage -t -s 1024 -o "$rendered_dir" "${assets_dir}/app-icon.svg" >/dev/null 2>&1
-/usr/bin/qlmanage -t -s 128 -o "$rendered_dir" "${assets_dir}/menu-bar-icon.svg" >/dev/null 2>&1
 /bin/cp "${rendered_dir}/app-icon.svg.png" "${assets_dir}/app-icon.png"
-/bin/cp "${rendered_dir}/menu-bar-icon.svg.png" "${assets_dir}/menu-bar-icon.png"
+/usr/bin/xcrun swift \
+	-module-cache-path "${temporary_dir}/swift-module-cache" \
+	"${repo_dir}/scripts/render-template-icon.swift" \
+	"${assets_dir}/menu-bar-icon.svg" \
+	"${assets_dir}/menu-bar-icon.png" \
+	128
 
 for specification in \
 	"16 icon_16x16.png" \
