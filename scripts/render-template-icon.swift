@@ -46,6 +46,28 @@ image.draw(
 )
 NSGraphicsContext.restoreGraphicsState()
 
+guard let pixels = bitmap.bitmapData else {
+    FileHandle.standardError.write(Data("Could not access the template icon pixels.\n".utf8))
+    exit(1)
+}
+
+for y in 0..<size {
+    for x in 0..<size {
+        let offset = y * bitmap.bytesPerRow + x * 4
+        let red = Double(pixels[offset]) / 255
+        let green = Double(pixels[offset + 1]) / 255
+        let blue = Double(pixels[offset + 2]) / 255
+        let sourceAlpha = Double(pixels[offset + 3]) / 255
+        let luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        let templateAlpha = UInt8((255 * sourceAlpha * (1 - luminance)).rounded())
+
+        pixels[offset] = 0
+        pixels[offset + 1] = 0
+        pixels[offset + 2] = 0
+        pixels[offset + 3] = templateAlpha
+    }
+}
+
 let corners = [
     (0, 0),
     (size - 1, 0),

@@ -1023,8 +1023,7 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
 }
 
 - (BOOL)setTemplateIconNamed:(NSString *)resourceName description:(NSString *)description {
-    NSString *imagePath = [[NSBundle mainBundle] pathForResource:resourceName ofType:@"svg"];
-    NSImage *image = imagePath != nil ? [[NSImage alloc] initWithContentsOfFile:imagePath] : nil;
+    NSImage *image = [[NSBundle mainBundle] imageForResource:resourceName];
     if (image == nil) {
         return NO;
     }
@@ -1047,14 +1046,14 @@ static NSButton *ShortcutButton(id target, SEL action, NSRect frame) {
 - (void)showReadyStatus {
     NSString *description = [NSString stringWithFormat:@"Teams Mute Helper %@ — %@",
                               CurrentVersion(), [self shortcutDisplayString]];
-    if (![self setTemplateIconNamed:@"MenuBarIcon" description:description]) {
+    if (![self setTemplateIconNamed:@"MenuBarIconTemplate" description:description]) {
         [self setStatusSymbol:@"mic.slash" description:description];
     }
 }
 
 - (void)showPressedStatus {
     NSString *description = @"Toggling Teams mute…";
-    if (![self setTemplateIconNamed:@"MenuBarIconPressed" description:description]) {
+    if (![self setTemplateIconNamed:@"MenuBarIconPressedTemplate" description:description]) {
         [self setStatusSymbol:@"mic.badge.plus" description:description];
     }
 }

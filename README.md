@@ -188,8 +188,8 @@ You can then remove the helper's entry from Accessibility settings.
 - [`scripts/test.sh`](scripts/test.sh): runs offline telemetry regression checks and builds the universal app.
 - [`RELEASING.md`](RELEASING.md): documents the maintainer-only signed release process.
 - [`assets/app-icon.svg`](assets/app-icon.svg), [`assets/app-icon.png`](assets/app-icon.png), and [`assets/AppIcon.icns`](assets/AppIcon.icns): vector source, README image, and macOS bundle icon; regenerate the derived assets with [`scripts/build-icons.sh`](scripts/build-icons.sh).
-- [`assets/menu-bar-icon.svg`](assets/menu-bar-icon.svg) and [`assets/menu-bar-icon-pressed.svg`](assets/menu-bar-icon-pressed.svg): resolution-independent macOS template icons for the idle and active-toggle states.
-- [`assets/menu-bar-icon.png`](assets/menu-bar-icon.png) and [`assets/menu-bar-icon-pressed.png`](assets/menu-bar-icon-pressed.png): high-resolution transparent renders of the menu-bar icons for inspection and reuse.
+- [`assets/menu-bar-icon.svg`](assets/menu-bar-icon.svg) and [`assets/menu-bar-icon-pressed.svg`](assets/menu-bar-icon-pressed.svg): pixel-fitted vector masters for the idle and active-toggle states.
+- [`assets/menu-bar-icon.png`](assets/menu-bar-icon.png) and [`assets/menu-bar-icon-pressed.png`](assets/menu-bar-icon-pressed.png): high-resolution transparent renders for inspection and reuse; the `*-template.png` and `*-template@2x.png` variants are the optically sized runtime assets.
 - [`assets/github-mark.svg`](assets/github-mark.svg): monochrome GitHub mark used by the repository link in Settings.
 - [`assets/settings.jpg`](assets/settings.jpg): README screenshot of the Settings window.
 - [`TeamsMuteHelper.m`](TeamsMuteHelper.m): owns both shortcut settings, update checks, anonymous usage reporting, the global listener, Teams delivery, and state verification.
@@ -198,7 +198,7 @@ You can then remove the helper's entry from Accessibility settings.
 - [`toggle-teams-mute.applescript`](toggle-teams-mute.applescript): optional compatibility launcher for Shortcuts.
 
 > [!IMPORTANT]
-> Always regenerate icons with `./scripts/build-icons.sh`. The app bundles the menu-bar SVGs directly so AppKit renders them at the display's native scale; the PNGs are high-resolution derived assets, not runtime menu-bar resources. Do not rasterize the menu-bar SVG with Quick Look: it replaces transparency with opaque white, which macOS renders as a solid template icon. The generator preserves and validates the transparent canvas.
+> Always regenerate icons with `./scripts/build-icons.sh`. The menu-bar SVGs use a 36-unit Retina pixel grid and heavier small-size geometry; the app bundles purpose-rendered 18px and 36px template images so AppKit can select the correct display representation. White areas in the SVG masters are deliberate cutouts that the generator converts to transparency. Do not rasterize them with Quick Look or another generic converter: opaque white becomes visible template artwork and recreates the solid-icon bug.
 
 ## Limitations
 

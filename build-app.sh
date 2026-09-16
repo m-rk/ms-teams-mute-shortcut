@@ -31,8 +31,10 @@ fi
 /bin/mkdir -p "${output_app}/Contents/MacOS" "${output_app}/Contents/Resources"
 /bin/cp "${repo_dir}/TeamsMuteHelper-Info.plist" "$plist"
 /bin/cp "${repo_dir}/assets/AppIcon.icns" "${output_app}/Contents/Resources/AppIcon.icns"
-/bin/cp "${repo_dir}/assets/menu-bar-icon.svg" "${output_app}/Contents/Resources/MenuBarIcon.svg"
-/bin/cp "${repo_dir}/assets/menu-bar-icon-pressed.svg" "${output_app}/Contents/Resources/MenuBarIconPressed.svg"
+/bin/cp "${repo_dir}/assets/menu-bar-icon-template.png" "${output_app}/Contents/Resources/MenuBarIconTemplate.png"
+/bin/cp "${repo_dir}/assets/menu-bar-icon-template@2x.png" "${output_app}/Contents/Resources/MenuBarIconTemplate@2x.png"
+/bin/cp "${repo_dir}/assets/menu-bar-icon-pressed-template.png" "${output_app}/Contents/Resources/MenuBarIconPressedTemplate.png"
+/bin/cp "${repo_dir}/assets/menu-bar-icon-pressed-template@2x.png" "${output_app}/Contents/Resources/MenuBarIconPressedTemplate@2x.png"
 /bin/cp "${repo_dir}/assets/github-mark.svg" "${output_app}/Contents/Resources/GitHubMark.svg"
 
 telemetry_production_build=false

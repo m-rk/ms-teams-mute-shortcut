@@ -24,18 +24,25 @@ done
 
 /usr/bin/qlmanage -t -s 1024 -o "$rendered_dir" "${assets_dir}/app-icon.svg" >/dev/null 2>&1
 /bin/cp "${rendered_dir}/app-icon.svg.png" "${assets_dir}/app-icon.png"
-/usr/bin/xcrun swift \
-	-module-cache-path "${temporary_dir}/swift-module-cache" \
-	"${repo_dir}/scripts/render-template-icon.swift" \
-	"${assets_dir}/menu-bar-icon.svg" \
-	"${assets_dir}/menu-bar-icon.png" \
-	1024
-/usr/bin/xcrun swift \
-	-module-cache-path "${temporary_dir}/swift-module-cache" \
-	"${repo_dir}/scripts/render-template-icon.swift" \
-	"${assets_dir}/menu-bar-icon-pressed.svg" \
-	"${assets_dir}/menu-bar-icon-pressed.png" \
-	1024
+
+render_template_icon() {
+	/usr/bin/xcrun swift \
+		-module-cache-path "${temporary_dir}/swift-module-cache" \
+		"${repo_dir}/scripts/render-template-icon.swift" "$1" "$2" "$3"
+}
+
+render_template_icon "${assets_dir}/menu-bar-icon.svg" \
+	"${assets_dir}/menu-bar-icon.png" 1024
+render_template_icon "${assets_dir}/menu-bar-icon-pressed.svg" \
+	"${assets_dir}/menu-bar-icon-pressed.png" 1024
+render_template_icon "${assets_dir}/menu-bar-icon.svg" \
+	"${assets_dir}/menu-bar-icon-template.png" 18
+render_template_icon "${assets_dir}/menu-bar-icon.svg" \
+	"${assets_dir}/menu-bar-icon-template@2x.png" 36
+render_template_icon "${assets_dir}/menu-bar-icon-pressed.svg" \
+	"${assets_dir}/menu-bar-icon-pressed-template.png" 18
+render_template_icon "${assets_dir}/menu-bar-icon-pressed.svg" \
+	"${assets_dir}/menu-bar-icon-pressed-template@2x.png" 36
 
 for specification in \
 	"16 icon_16x16.png" \
