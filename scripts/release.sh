@@ -84,7 +84,9 @@ TEAMS_MUTE_ARCHS="arm64 x86_64" \
 	TEAMS_MUTE_SIGN_IDENTITY="$sign_identity" \
 	"${repo_dir}/build-app.sh" "$app_path"
 
-/usr/bin/lipo "${app_path}/Contents/MacOS/TeamsMuteHelper" -verify_arch arm64 x86_64
+for architecture in arm64 x86_64; do
+	/usr/bin/lipo "${app_path}/Contents/MacOS/TeamsMuteHelper" -verify_arch "$architecture"
+done
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app_path" "$notary_archive"
 /usr/bin/xcrun notarytool submit "$notary_archive" --keychain-profile "$notary_profile" --wait
 /usr/bin/xcrun stapler staple "$app_path"

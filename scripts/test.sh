@@ -26,9 +26,21 @@ test_binary="${test_dir}/TelemetryTests"
 
 test "$(/usr/libexec/PlistBuddy -c 'Print :TelemetryProductionBuild' \
 	"${repo_dir}/build/Teams Mute Helper.app/Contents/Info.plist")" = "false"
-test -f "${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIcon.svg"
-test -f "${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIconPressed.svg"
-/usr/bin/lipo "${repo_dir}/build/Teams Mute Helper.app/Contents/MacOS/TeamsMuteHelper" \
-	-verify_arch arm64 x86_64
+test -f "${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIconTemplate.png"
+test -f "${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIconTemplate@2x.png"
+test -f "${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIconPressedTemplate.png"
+test -f "${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIconPressedTemplate@2x.png"
+test "$(/usr/bin/sips -g pixelWidth \
+	"${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIconTemplate.png" | \
+	/usr/bin/awk '/pixelWidth/ { print $2 }')" = "18"
+test "$(/usr/bin/sips -g pixelWidth \
+	"${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIconTemplate@2x.png" | \
+	/usr/bin/awk '/pixelWidth/ { print $2 }')" = "36"
+test ! -f "${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIcon.svg"
+test ! -f "${repo_dir}/build/Teams Mute Helper.app/Contents/Resources/MenuBarIconPressed.svg"
+for architecture in arm64 x86_64; do
+	/usr/bin/lipo "${repo_dir}/build/Teams Mute Helper.app/Contents/MacOS/TeamsMuteHelper" \
+		-verify_arch "$architecture"
+done
 
 /usr/bin/printf 'All tests passed\n'
